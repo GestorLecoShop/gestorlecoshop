@@ -83,10 +83,22 @@ function normalizeCosts(c) {
 }
 let costs = normalizeCosts(readJSON(COSTS_FILE, { taxaPadrao: 0.09, itens: {} }));
 
-// Em hospedagem o disco é temporário: se não há token salvo mas existe
-// ML_REFRESH_TOKEN nas variáveis de ambiente, restaura a conexão a partir dele.
-if ((!tokens.ml || !tokens.ml.refresh_token) && ENV.ML_REFRESH_TOKEN) {
-  tokens.ml = { refresh_token: ENV.ML_REFRESH_TOKEN, expires_at: 0 };
+// ---------- Contas do Mercado Livre ----------
+// Várias contas ML no mesmo painel (ex.: matriz e filial). Cada uma vira um canal.
+// Todas usam o MESMO app do ML (mesmo Client ID/Secret) — muda só quem faz o login.
+const CONTAS_ML = {
+  ml:    { nome: 'Mercado Livre', cor: '#ffe600', env: 'ML_REFRESH_TOKEN' },
+  ldmsc: { nome: 'LDM SC',        cor: '#00b8d9', env: 'ML_REFRESH_TOKEN_LDMSC' },
+};
+const ehContaML = (c) => Object.prototype.hasOwnProperty.call(CONTAS_ML, c);
+
+// Em hospedagem o disco é temporário: se não há token salvo mas existe a variável
+// de ambiente correspondente, restaura a conexão daquela conta a partir dela.
+for (const c of Object.keys(CONTAS_ML)) {
+  const envVar = CONTAS_ML[c].env;
+  if ((!tokens[c] || !tokens[c].refresh_token) && ENV[envVar]) {
+    tokens[c] = { refresh_token: ENV[envVar], expires_at: 0 };
+  }
 }
 
 // ---------- HTTP helper (Promise) ----------
@@ -98,6 +110,7 @@ function request(method, urlStr, { headers = {}, body = null } = {}) {
     const opts = {
       method,
       hostname: u.hostname,
+      port: u.port || undefined,
       path: u.pathname + u.search,
       headers: { 'Accept': 'application/json', ...headers },
     };
@@ -118,11 +131,12 @@ function request(method, urlStr, { headers = {}, body = null } = {}) {
 }
 
 // ================= MERCADO LIVRE =================
-const mlConnected = () => !!(tokens.ml && tokens.ml.refresh_token);
+const mlConnected = (conta = 'ml') => !!(tokens[conta] && tokens[conta].refresh_token);
+const contasConectadas = () => Object.keys(CONTAS_ML).filter((c) => mlConnected(c));
 
-async function mlGetValidToken() {
-  const t = tokens.ml;
-  if (!t) throw new Error('Mercado Livre não conectado.');
+async function mlGetValidToken(conta = 'ml') {
+  const t = tokens[conta];
+  if (!t) throw new Error(`Conta "${(CONTAS_ML[conta] || {}).nome || conta}" não conectada.`);
   if (Date.now() < (t.expires_at || 0) - 60000) return t.access_token;
   // refresh
   const { status, json } = await request('POST', `${ML.apiHost}/oauth/token`, {
@@ -135,17 +149,17 @@ async function mlGetValidToken() {
     },
   });
   if (status !== 200) throw new Error('Falha ao renovar token ML: ' + JSON.stringify(json));
-  tokens.ml = {
+  tokens[conta] = {
     ...t,
     access_token: json.access_token,
     refresh_token: json.refresh_token || t.refresh_token,
     expires_at: Date.now() + (json.expires_in || 21600) * 1000,
   };
   writeJSON(TOKENS_FILE, tokens);
-  return tokens.ml.access_token;
+  return tokens[conta].access_token;
 }
 
-async function mlExchangeCode(code) {
+async function mlExchangeCode(code, conta = 'ml') {
   const { status, json } = await request('POST', `${ML.apiHost}/oauth/token`, {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: {
@@ -157,19 +171,20 @@ async function mlExchangeCode(code) {
     },
   });
   if (status !== 200) throw new Error('Falha na autorização ML: ' + JSON.stringify(json));
-  tokens.ml = {
+  tokens[conta] = {
     access_token: json.access_token,
     refresh_token: json.refresh_token,
     expires_at: Date.now() + (json.expires_in || 21600) * 1000,
     user_id: json.user_id,
   };
   writeJSON(TOKENS_FILE, tokens);
-  // Em hospedagem, salve este valor na variável ML_REFRESH_TOKEN para não perder a conexão em reinícios.
-  console.log('\n===== ML_REFRESH_TOKEN (guarde nas variáveis de ambiente do host) =====\n' + json.refresh_token + '\n=======================================================================\n');
+  // Em hospedagem, salve este valor na variável indicada para não perder a conexão em reinícios.
+  const envVar = (CONTAS_ML[conta] || {}).env || 'ML_REFRESH_TOKEN';
+  console.log(`\n===== ${envVar} (guarde nas variáveis de ambiente do host) =====\n` + json.refresh_token + '\n=======================================================================\n');
 }
 
-async function mlApi(pathStr) {
-  const token = await mlGetValidToken();
+async function mlApi(pathStr, conta = 'ml') {
+  const token = await mlGetValidToken(conta);
   const { status, json } = await request('GET', `${ML.apiHost}${pathStr}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -178,7 +193,7 @@ async function mlApi(pathStr) {
 }
 
 // Busca pedidos pagos no período (paginado)
-async function mlFetchOrders(sellerId, fromISO, toISO) {
+async function mlFetchOrders(sellerId, fromISO, toISO, conta = 'ml') {
   const orders = [];
   let offset = 0;
   const limit = 50;
@@ -192,7 +207,7 @@ async function mlFetchOrders(sellerId, fromISO, toISO) {
       offset: String(offset),
       limit: String(limit),
     });
-    const data = await mlApi(`/orders/search?${qs}`);
+    const data = await mlApi(`/orders/search?${qs}`, conta);
     const results = data.results || [];
     orders.push(...results);
     const total = (data.paging && data.paging.total) || results.length;
@@ -203,9 +218,9 @@ async function mlFetchOrders(sellerId, fromISO, toISO) {
 }
 
 // Custo de frete pago pelo vendedor (opcional, 1 chamada por envio)
-async function mlShippingSellerCost(shipmentId) {
+async function mlShippingSellerCost(shipmentId, conta = 'ml') {
   try {
-    const c = await mlApi(`/shipments/${shipmentId}/costs`);
+    const c = await mlApi(`/shipments/${shipmentId}/costs`, conta);
     // estrutura: { gross_amount, senders:[{cost}], receiver:{cost} }
     if (c && c.senders && c.senders[0] && typeof c.senders[0].cost === 'number') return c.senders[0].cost;
     if (c && typeof c.gross_amount === 'number') return c.gross_amount;
@@ -214,10 +229,10 @@ async function mlShippingSellerCost(shipmentId) {
 }
 
 // Monta a estrutura de dashboard a partir dos pedidos do ML
-async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
-  const me = await mlApi('/users/me');
+async function mlBuildChannel(fromISO, toISO, { withShipping = true, conta = 'ml' } = {}) {
+  const me = await mlApi('/users/me', conta);
   const sellerId = me.id;
-  const orders = await mlFetchOrders(sellerId, fromISO, toISO);
+  const orders = await mlFetchOrders(sellerId, fromISO, toISO, conta);
 
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   const bySku = {}; // sku -> { nome, un, fat, comissao, custo, imposto }
@@ -242,7 +257,7 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
       bySku[sku].imposto += impItem;
     }
     if (withShipping && o.shipping && o.shipping.id) {
-      freteVendedor += await mlShippingSellerCost(o.shipping.id);
+      freteVendedor += await mlShippingSellerCost(o.shipping.id, conta);
     }
   }
 
@@ -260,8 +275,9 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
 
   const lb = liq - custoProdutos - imposto;
 
+  const cfgConta = CONTAS_ML[conta] || CONTAS_ML.ml;
   const channel = {
-    nome: 'Mercado Livre', cor: '#ffe600',
+    nome: cfgConta.nome, cor: cfgConta.cor,
     fat: round2(fat), liq: round2(liq), lucroBruto: round2(lb),
     ads: 0, // ML Ads: integração separada (Product Ads API) — fase seguinte
     lucro: round2(lb),
@@ -318,7 +334,7 @@ function upsertProduct(b) {
 // Monta o objeto detalhado de UM pedido (usado por mlListSales e demoSales)
 // itens: [{ titulo, sku, qtd, unit, total, precoUnit, liquido, imposto, custo, custoExtra, lucro, margem, comissao }]
 // resumo: totais do pedido para a área expansível (estilo Gestor Seller)
-function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteVend, freteComp, descontos }) {
+function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteVend, freteComp, descontos, conta = 'ml' }) {
   const taxaPadrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.09;
   const totalProduto = itemsRaw.reduce((s, it) => s + it.unit * it.qtd, 0) || 1e-9;
   const itens = itemsRaw.map((it) => {
@@ -347,7 +363,8 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
   const soma = (k) => itens.reduce((s, i) => s + i[k], 0);
   const comissaoTot = soma('comissao');
   return {
-    id: String(id), data, dataAprov: dataAprov || data, status, canal: 'ml', marketplace: 'Mercado Livre',
+    id: String(id), data, dataAprov: dataAprov || data, status,
+    canal: conta, marketplace: (CONTAS_ML[conta] || CONTAS_ML.ml).nome,
     envio: envio || '', pack: !!pack,
     itens,
     resumo: {
@@ -360,13 +377,13 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
 }
 
 // Busca as miniaturas (fotos) dos produtos em lote via /items multiget
-async function mlItemThumbs(itemIds) {
+async function mlItemThumbs(itemIds, conta = 'ml') {
   const map = {};
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   for (let i = 0; i < ids.length; i += 20) {
     const chunk = ids.slice(i, i + 20);
     try {
-      const res = await mlApi(`/items?ids=${chunk.join(',')}&attributes=id,secure_thumbnail,thumbnail`);
+      const res = await mlApi(`/items?ids=${chunk.join(',')}&attributes=id,secure_thumbnail,thumbnail`, conta);
       (res || []).forEach((r) => {
         const b = (r && r.body) || r;
         if (b && b.id) {
@@ -381,16 +398,16 @@ async function mlItemThumbs(itemIds) {
 }
 
 // Lista de vendas individuais detalhadas (para a página "Vendas")
-async function mlListSales(fromISO, toISO) {
-  const me = await mlApi('/users/me');
-  const orders = await mlFetchOrders(me.id, fromISO, toISO);
+async function mlListSales(fromISO, toISO, conta = 'ml') {
+  const me = await mlApi('/users/me', conta);
+  const orders = await mlFetchOrders(me.id, fromISO, toISO, conta);
   const allIds = orders.flatMap((o) => (o.order_items || []).map((it) => it.item && it.item.id));
-  const thumbs = await mlItemThumbs(allIds);
+  const thumbs = await mlItemThumbs(allIds, conta);
   const out = [];
   for (const o of orders) {
     const items = o.order_items || [];
     let freteVend = 0;
-    if (o.shipping && o.shipping.id) freteVend = await mlShippingSellerCost(o.shipping.id);
+    if (o.shipping && o.shipping.id) freteVend = await mlShippingSellerCost(o.shipping.id, conta);
     const pays = o.payments || [];
     const freteComp = pays.reduce((s, pp) => s + (pp.shipping_cost || 0), 0);
     const descontos = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
@@ -405,7 +422,7 @@ async function mlListSales(fromISO, toISO) {
     out.push(buildOrder({
       id: o.id, data: o.date_created, dataAprov: o.date_closed, status: o.status,
       envio: (o.shipping && o.shipping.logistic_type) || '', pack: !!o.pack_id,
-      itemsRaw, freteVend, freteComp, descontos,
+      itemsRaw, freteVend, freteComp, descontos, conta,
     }));
   }
   return out;
@@ -462,19 +479,23 @@ const DEMO = readJSON(path.join(__dirname, 'demo-data.json'), null);
 async function buildDashboard({ from, to }) {
   const channels = {};
   const dreDetail = {};
-  let produtos = [];
-  const status = { ml: 'disconnected', amz: 'soon', shp: 'soon', mag: 'soon', tik: 'soon', loja: 'soon' };
+  const produtosPorCanal = {};
+  const status = { amz: 'soon', shp: 'soon', mag: 'soon', tik: 'soon', loja: 'soon' };
+  let algumConectado = false;
 
-  if (mlConnected()) {
+  // Cada conta do ML vira um canal próprio (ex.: Mercado Livre e LDM SC)
+  for (const conta of Object.keys(CONTAS_ML)) {
+    if (!mlConnected(conta)) { status[conta] = 'disconnected'; continue; }
     try {
-      const built = await mlBuildChannel(from, to, { withShipping: ENV.ML_SHIPPING !== 'off' });
-      channels.ml = built.channel;
-      dreDetail.ml = built.dreDetail;
-      produtos = built.produtos;
-      status.ml = 'connected';
+      const built = await mlBuildChannel(from, to, { withShipping: ENV.ML_SHIPPING !== 'off', conta });
+      channels[conta] = built.channel;
+      dreDetail[conta] = built.dreDetail;
+      produtosPorCanal[conta] = built.produtos;
+      status[conta] = 'connected';
+      algumConectado = true;
     } catch (e) {
-      status.ml = 'error';
-      status.mlError = String(e.message || e);
+      status[conta] = 'error';
+      status[conta + 'Error'] = String(e.message || e);
     }
   }
 
@@ -489,12 +510,29 @@ async function buildDashboard({ from, to }) {
   }
 
   // se nada conectado, usa dados demo para o usuário ver a interface
-  if (status.ml !== 'connected' && DEMO) {
-    return { channels: DEMO.channels, dreDetail: DEMO.dreDetail, abc: DEMO.abc, produtos: DEMO.produtos, status, demo: true, period: { from, to } };
+  if (!algumConectado && DEMO) {
+    return { channels: DEMO.channels, dreDetail: DEMO.dreDetail, abc: DEMO.abc, produtos: DEMO.produtos, produtosPorCanal: {}, status, demo: true, period: { from, to } };
   }
 
+  // Junta os produtos das contas somando por SKU (para a visão "todos os canais")
+  const soma = {};
+  for (const conta of Object.keys(produtosPorCanal)) {
+    for (const p of produtosPorCanal[conta]) {
+      const sku = p[1];
+      if (!soma[sku]) soma[sku] = [p[0], sku, 0, 0, 0, 0, 0, null];
+      soma[sku][2] += p[2]; soma[sku][3] += p[3]; soma[sku][4] += p[4]; soma[sku][5] += p[5];
+    }
+  }
+  const produtos = Object.values(soma).map((p) => {
+    p[3] = round2(p[3]); p[4] = round2(p[4]); p[5] = round2(p[5]);
+    p[6] = p[3] ? round2((p[4] / p[3]) * 100) : 0;
+    return p;
+  }).sort((a, b) => b[3] - a[3]);
+
   const abc = classifyABC(produtos);
-  return { channels, dreDetail, abc, produtos, status, demo: false, period: { from, to } };
+  const abcPorCanal = {};
+  for (const conta of Object.keys(produtosPorCanal)) abcPorCanal[conta] = classifyABC(produtosPorCanal[conta]);
+  return { channels, dreDetail, abc, abcPorCanal, produtos, produtosPorCanal, status, demo: false, period: { from, to } };
 }
 
 // ================= ROTEAMENTO HTTP =================
@@ -613,7 +651,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/auth/ml') {
       if (!ML.clientId) return sendJSON(res, 400, { error: 'Configure ML_CLIENT_ID no .env' });
-      const state = crypto.randomBytes(8).toString('hex');
+      // qual conta está sendo conectada (ml = principal, ldmsc = filial SC)
+      const conta = ehContaML(u.searchParams.get('conta')) ? u.searchParams.get('conta') : 'ml';
+      const state = conta + '.' + crypto.randomBytes(6).toString('hex');
       const auth = `${ML.authHost}/authorization?` + new URLSearchParams({
         response_type: 'code', client_id: ML.clientId, redirect_uri: ML.redirectUri, state,
       });
@@ -623,13 +663,17 @@ const server = http.createServer(async (req, res) => {
     if (p === '/callback') {
       const code = u.searchParams.get('code');
       if (!code) { res.writeHead(400); return res.end('Sem code'); }
-      await mlExchangeCode(code);
-      res.writeHead(302, { Location: '/?connected=ml' });
+      const st = String(u.searchParams.get('state') || '');
+      const conta = ehContaML(st.split('.')[0]) ? st.split('.')[0] : 'ml';
+      await mlExchangeCode(code, conta);
+      res.writeHead(302, { Location: '/?connected=' + conta });
       return res.end();
     }
-    if (p === '/api/status') return sendJSON(res, 200, {
-      ml: mlConnected(), clientIdSet: !!ML.clientId, redirectUri: ML.redirectUri,
-    });
+    if (p === '/api/status') {
+      const contas = {};
+      for (const c of Object.keys(CONTAS_ML)) contas[c] = { nome: CONTAS_ML[c].nome, cor: CONTAS_ML[c].cor, conectada: mlConnected(c) };
+      return sendJSON(res, 200, { ml: mlConnected('ml'), contas, clientIdSet: !!ML.clientId, redirectUri: ML.redirectUri });
+    }
     if (p === '/api/dashboard') {
       const now = new Date();
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -643,15 +687,25 @@ const server = http.createServer(async (req, res) => {
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
       const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
       const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
-      if (!mlConnected()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
-      try {
-        const sales = await mlListSales(from, to);
-        return sendJSON(res, 200, { sales, demo: false });
-      } catch (e) {
-        return sendJSON(res, 200, { sales: [], demo: false, error: String(e.message || e) });
+      const conectadas = contasConectadas();
+      if (!conectadas.length) return sendJSON(res, 200, { sales: demoSales(), demo: true });
+      // se o filtro pedir um canal específico, busca só nele
+      const filtro = u.searchParams.get('canal');
+      const alvo = ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : conectadas;
+      let sales = [];
+      const erros = [];
+      for (const conta of alvo) {
+        try { sales = sales.concat(await mlListSales(from, to, conta)); }
+        catch (e) { erros.push(`${CONTAS_ML[conta].nome}: ${String(e.message || e)}`); }
       }
+      sales.sort((a, b) => new Date(b.data) - new Date(a.data));
+      return sendJSON(res, 200, { sales, demo: false, error: erros.length ? erros.join(' | ') : undefined });
     }
-    if (p === '/api/disconnect/ml') { delete tokens.ml; writeJSON(TOKENS_FILE, tokens); return sendJSON(res, 200, { ok: true }); }
+    if (p.startsWith('/api/disconnect/')) {
+      const conta = p.split('/')[3];
+      if (ehContaML(conta)) { delete tokens[conta]; writeJSON(TOKENS_FILE, tokens); return sendJSON(res, 200, { ok: true }); }
+      return sendJSON(res, 400, { error: 'conta inválida' });
+    }
     if (p === '/') return serveStatic(res, 'index.html');
     return serveStatic(res, p.replace(/^\//, ''));
   } catch (e) {
@@ -661,6 +715,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n  Leco Shop rodando em  http://localhost:${PORT}`);
-  console.log(`  Mercado Livre: ${mlConnected() ? 'CONECTADO' : 'nao conectado — abra o site e clique em Conectar'}`);
+  for (const c of Object.keys(CONTAS_ML)) {
+    console.log(`  ${CONTAS_ML[c].nome}: ${mlConnected(c) ? 'CONECTADO' : 'nao conectado — abra o site e clique em Conectar'}`);
+  }
   if (!ML.clientId) console.log('  Falta configurar o .env (ML_CLIENT_ID / ML_CLIENT_SECRET). Veja o README.\n');
 });
