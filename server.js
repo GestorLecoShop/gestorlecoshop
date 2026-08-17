@@ -255,6 +255,40 @@ async function mlFetchOrders(sellerId, fromISO, toISO, conta = 'ml') {
   return orders;
 }
 
+// Roda várias tarefas ao mesmo tempo, com limite (o ML recusa rajadas grandes)
+async function emLotes(itens, limite, tarefa) {
+  const out = new Array(itens.length);
+  let i = 0;
+  const trabalhadores = new Array(Math.min(limite, itens.length || 1)).fill(0).map(async () => {
+    while (i < itens.length) { const k = i++; out[k] = await tarefa(itens[k], k); }
+  });
+  await Promise.all(trabalhadores);
+  return out;
+}
+
+// Dados do envio do pedido: frete pago pelo vendedor + modalidade real (FULL, Flex, Coleta...).
+// A modalidade fica no ENVIO, não no anúncio: o mesmo anúncio pode sair pelo Full num
+// pedido e pelo Mercado Envios em outro (quando acaba o estoque no Full, por exemplo).
+async function mlEnvio(shipmentId, conta = 'ml') {
+  const info = { frete: 0, tipo: '' };
+  if (!shipmentId) return info;
+  const [custos, envio] = await Promise.all([
+    mlApi(`/shipments/${shipmentId}/costs`, conta).catch(() => null),
+    mlApi(`/shipments/${shipmentId}`, conta).catch(() => null),
+  ]);
+  if (custos) {
+    if (custos.senders && custos.senders[0] && typeof custos.senders[0].cost === 'number') info.frete = custos.senders[0].cost;
+    else if (typeof custos.gross_amount === 'number') info.frete = custos.gross_amount;
+  }
+  if (envio) {
+    info.tipo = envio.logistic_type
+      || (envio.logistic && envio.logistic.type)
+      || (envio.shipping_option && envio.shipping_option.logistic_type)
+      || '';
+  }
+  return info;
+}
+
 // Custo de frete pago pelo vendedor (opcional, 1 chamada por envio)
 async function mlShippingSellerCost(shipmentId, conta = 'ml') {
   try {
@@ -530,11 +564,12 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
   const { thumbs, envios } = await mlItemInfo(allIds, conta);
   registrarPendentes(orders, conta);
   guardarFotos(orders, thumbs);
+  // frete + modalidade de envio de cada pedido, buscados em paralelo
+  const envioPedido = await emLotes(orders, 8, (o) => mlEnvio(o.shipping && o.shipping.id, conta));
   const out = [];
-  for (const o of orders) {
+  orders.forEach((o, idx) => {
     const items = o.order_items || [];
-    let freteVend = 0;
-    if (o.shipping && o.shipping.id) freteVend = await mlShippingSellerCost(o.shipping.id, conta);
+    const freteVend = envioPedido[idx].frete;
     const pays = o.payments || [];
     const freteComp = pays.reduce((s, pp) => s + (pp.shipping_cost || 0), 0);
     const descontos = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
@@ -551,13 +586,14 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
     }));
     out.push(buildOrder({
       id: o.id, data: o.date_created, dataAprov: o.date_closed, status: o.status,
-      // o pedido raramente traz logistic_type; o anúncio traz (FULL, Flex, Coleta, Agência...)
-      envio: (o.shipping && o.shipping.logistic_type)
+      // modalidade real deste pedido; o anúncio só serve de reserva se o envio não responder
+      envio: envioPedido[idx].tipo
+        || (o.shipping && o.shipping.logistic_type)
         || items.map((it) => it.item && envios[it.item.id]).find(Boolean) || '',
       pack: !!o.pack_id,
       itemsRaw, freteVend, freteComp, descontos, conta,
     }));
-  }
+  });
   return out;
 }
 
