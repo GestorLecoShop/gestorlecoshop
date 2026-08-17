@@ -123,10 +123,21 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
       <div><h1>Visão Geral</h1><div class="sub" id="periodLabel">Carregando…</div></div>
       <div class="filters">
         <select class="sel" id="fPeriod">
-          <option value="mes">Este mês</option>
-          <option value="ant">Mês passado</option>
+          <option value="hoje">Hoje</option>
+          <option value="ontem">Ontem</option>
+          <option value="7">Últimos 7 dias</option>
+          <option value="15">Últimos 15 dias</option>
           <option value="30">Últimos 30 dias</option>
+          <option value="mes" selected>Este mês</option>
+          <option value="ant">Mês passado</option>
+          <option value="custom">Personalizado…</option>
         </select>
+        <span id="customRange" style="display:none;align-items:center;gap:8px">
+          <input type="date" class="sel" id="fFrom" title="De">
+          <span class="muted">até</span>
+          <input type="date" class="sel" id="fTo" title="Até">
+          <button class="btn" id="applyCustom">Aplicar</button>
+        </span>
         <select class="sel" id="fChannel">
           <option value="all">Todos os canais</option>
           <option value="ml">Mercado Livre</option>
@@ -231,14 +242,29 @@ let state={channel:'all',period:'mes',trendMetric:'fat'};
 let charts={};
 
 function periodRange(key){
-  const now=new Date(); const y=now.getFullYear(), m=now.getMonth();
-  let from,to;
-  if(key==='mes'){from=new Date(y,m,1);to=now;}
-  else if(key==='ant'){from=new Date(y,m-1,1);to=new Date(y,m,0,23,59,59);}
-  else {to=now;from=new Date(now.getTime()-30*864e5);}
-  const iso=d=>d.toISOString().slice(0,19)+'.000-03:00';
-  const lbl=d=>d.toLocaleDateString('pt-BR');
-  return {from:iso(from),to:iso(to),label:lbl(from)+' a '+lbl(to)};
+  const now=new Date(); const y=now.getFullYear(), m=now.getMonth(), d=now.getDate();
+  const dayStart=(dt)=>new Date(dt.getFullYear(),dt.getMonth(),dt.getDate(),0,0,0);
+  const dayEnd=(dt)=>new Date(dt.getFullYear(),dt.getMonth(),dt.getDate(),23,59,59);
+  let from,to,single=false;
+  if(key==='hoje'){from=dayStart(now);to=now;single=true;}
+  else if(key==='ontem'){const yd=new Date(y,m,d-1);from=dayStart(yd);to=dayEnd(yd);single=true;}
+  else if(key==='7'){from=dayStart(new Date(y,m,d-6));to=now;}
+  else if(key==='15'){from=dayStart(new Date(y,m,d-14));to=now;}
+  else if(key==='30'){from=dayStart(new Date(y,m,d-29));to=now;}
+  else if(key==='mes'){from=new Date(y,m,1);to=now;}
+  else if(key==='ant'){from=new Date(y,m-1,1);to=dayEnd(new Date(y,m,0));}
+  else if(key==='custom'){
+    const fv=document.getElementById('fFrom').value, tv=document.getElementById('fTo').value;
+    from=fv?dayStart(new Date(fv+'T00:00:00')):new Date(y,m,1);
+    to=tv?dayEnd(new Date(tv+'T00:00:00')):now;
+    single=(fv&&tv&&fv===tv);
+  }
+  else {from=new Date(y,m,1);to=now;}
+  // ISO no fuso local (-03:00), sem o deslocamento do toISOString (UTC)
+  const p=n=>String(n).padStart(2,'0');
+  const iso=x=>x.getFullYear()+'-'+p(x.getMonth()+1)+'-'+p(x.getDate())+'T'+p(x.getHours())+':'+p(x.getMinutes())+':'+p(x.getSeconds())+'.000-03:00';
+  const lbl=x=>x.toLocaleDateString('pt-BR');
+  return {from:iso(from),to:iso(to),label: single?lbl(from):(lbl(from)+' a '+lbl(to))};
 }
 
 async function loadStatus(){
@@ -378,7 +404,27 @@ function bindEvents(){
   document.querySelectorAll('#prodTable th').forEach(th=>th.onclick=()=>{const k=+th.dataset.k;if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=-1;}renderTable();});
 }
 document.getElementById('fChannel').onchange=e=>{state.channel=e.target.value;renderAll();};
-document.getElementById('fPeriod').onchange=e=>{state.period=e.target.value;loadDashboard();};
+document.getElementById('fPeriod').onchange=e=>{
+  state.period=e.target.value;
+  const cr=document.getElementById('customRange');
+  if(state.period==='custom'){
+    // pré-preenche com o mês atual e mostra os campos; só busca ao clicar em Aplicar
+    const now=new Date(), p=n=>String(n).padStart(2,'0');
+    const fmt=x=>x.getFullYear()+'-'+p(x.getMonth()+1)+'-'+p(x.getDate());
+    if(!document.getElementById('fFrom').value) document.getElementById('fFrom').value=fmt(new Date(now.getFullYear(),now.getMonth(),1));
+    if(!document.getElementById('fTo').value) document.getElementById('fTo').value=fmt(now);
+    cr.style.display='inline-flex';
+  } else {
+    cr.style.display='none';
+    loadDashboard();
+  }
+};
+document.getElementById('applyCustom').onclick=()=>{
+  const fv=document.getElementById('fFrom').value, tv=document.getElementById('fTo').value;
+  if(!fv||!tv){ alert('Escolha as duas datas (De e Até).'); return; }
+  if(fv>tv){ alert('A data inicial não pode ser depois da final.'); return; }
+  loadDashboard();
+};
 
 // ===== Configurações (conexão + custos) =====
 let cfgRedirectUri='';
