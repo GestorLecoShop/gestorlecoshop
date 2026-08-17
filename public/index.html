@@ -107,8 +107,8 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
   <aside class="side">
     <div class="brand"><div class="logo">L</div><div><b>Leco Shop</b><span>Gestão de Vendas</span></div></div>
     <nav class="nav">
-      <a class="on"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Dashboard</a>
-      <a><svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Vendas</a>
+      <a id="navDashboard" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Dashboard</a>
+      <a id="navVendas"><svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Vendas</a>
       <a><svg viewBox="0 0 24 24"><path d="M3 3v18h18M8 17V9M13 17V5M18 17v-6"/></svg>Curva ABC</a>
       <a><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Analítico</a>
       <a><svg viewBox="0 0 24 24"><path d="M4 22V4a2 2 0 012-2h9l5 5v15a2 2 0 01-2 2zM14 2v6h6"/></svg>Financeiro / DRE</a>
@@ -237,8 +237,8 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 const BRL=v=>'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const PCT=v=>(v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
 const ORDER=['ml','amz','shp','mag','tik','loja'];
-let DATA=null, CH={}, DRE={}, ABC={}, PRODUTOS=[];
-let state={channel:'all',period:'mes',trendMetric:'fat'};
+let DATA=null, CH={}, DRE={}, ABC={}, PRODUTOS=[], SALES=[];
+let state={channel:'all',period:'mes',trendMetric:'fat',view:'dashboard'};
 let charts={};
 
 function periodRange(key){
@@ -278,6 +278,68 @@ async function loadDashboard(){
   DATA=await r.json();
   CH=DATA.channels||{}; DRE=DATA.dreDetail||{}; ABC=DATA.abc||{}; PRODUTOS=(DATA.produtos||[]).map(p=>p.slice());
   renderBanner(); renderConn(); mount();
+}
+
+// ===== Navegação entre páginas (Dashboard / Vendas) =====
+function refresh(){ if(state.view==='vendas') loadSales(); else loadDashboard(); }
+function goView(v){
+  state.view=v;
+  document.getElementById('navDashboard').classList.toggle('on',v==='dashboard');
+  document.getElementById('navVendas').classList.toggle('on',v==='vendas');
+  document.querySelector('.top h1').textContent = v==='vendas' ? 'Vendas' : 'Visão Geral';
+  refresh();
+}
+async function loadSales(){
+  const pr=periodRange(state.period);
+  document.getElementById('periodLabel').textContent=pr.label;
+  document.getElementById('content').innerHTML='<div class="loading">Buscando vendas…</div>';
+  try{
+    const r=await fetch(`/api/sales?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}`);
+    const j=await r.json(); SALES=j.sales||[];
+    renderSales(j.demo, j.error);
+  }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
+}
+const STATUS_PT={paid:'Pago',payment_required:'Aguard. pgto',payment_in_process:'Processando',partially_paid:'Parcial',shipped:'Enviado',delivered:'Entregue',cancelled:'Cancelado',invalid:'Inválido',not_delivered:'Não entregue'};
+let salesSort={k:'data',dir:-1};
+function renderSales(demo,error){
+  const c=document.getElementById('content');
+  const chDot={ml:'#ffe600',amz:'#ff9900',shp:'#ee4d2d',mag:'#0086ff',tik:'#69c9d0',loja:'#a78bfa'};
+  const chName={ml:'Mercado Livre',amz:'Amazon',shp:'Shopee',mag:'Magalu',tik:'TikTok',loja:'Loja'};
+  c.innerHTML=`
+    ${demo?'<div class="banner demo" style="margin-bottom:16px"><div>🟡 <b>Modo demonstração</b> — vendas de exemplo. Conecte o Mercado Livre para ver as reais.</div></div>':''}
+    ${error?`<div class="banner err" style="margin-bottom:16px"><div>⚠ ${error}</div></div>`:''}
+    <div class="card">
+      <div class="card-head"><div><h3 id="salesCount"></h3><div class="hint">Pedidos do período · ordene clicando nos títulos</div></div>
+        <input class="search" id="salesSearch" placeholder="Buscar produto, SKU ou nº do pedido…"></div>
+      <div class="tbl-wrap"><table id="salesTable"><thead><tr>
+        <th data-k="data">Data</th><th data-k="canal">Canal</th><th data-k="id">Pedido</th>
+        <th data-k="produto">Produto</th><th class="num" data-k="qtd">Qtd</th>
+        <th class="num" data-k="valor">Valor</th><th class="num" data-k="comissao">Comissão</th>
+        <th class="num" data-k="liquido">Líquido</th><th data-k="status">Status</th>
+      </tr></thead><tbody id="salesBody"></tbody></table></div>
+    </div>`;
+  const fmtDate=iso=>{const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());};
+  function draw(){
+    const q=(document.getElementById('salesSearch').value||'').toLowerCase();
+    let rows=SALES.filter(s=>String(s.produto).toLowerCase().includes(q)||String(s.sku).toLowerCase().includes(q)||String(s.id).toLowerCase().includes(q));
+    const k=salesSort.k, dir=salesSort.dir;
+    rows.sort((a,b)=>{let x=a[k],y=b[k];if(k==='data'){x=new Date(x).getTime();y=new Date(y).getTime();}if(typeof x==='string')return dir*String(x).localeCompare(String(y));return dir*((x||0)-(y||0));});
+    document.getElementById('salesCount').textContent=rows.length+' vendas';
+    document.getElementById('salesBody').innerHTML=rows.map(s=>`<tr>
+      <td>${fmtDate(s.data)}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:3px;background:${chDot[s.canal]||'#8a99ab'}"></span>${chName[s.canal]||s.canal}</span></td>
+      <td class="sku">${s.id}</td>
+      <td><div>${s.produto}</div><div class="sku">${s.sku||''}</div></td>
+      <td class="num">${s.qtd}</td>
+      <td class="num">${BRL(s.valor)}</td>
+      <td class="num neg">${BRL(-Math.abs(s.comissao))}</td>
+      <td class="num" style="font-weight:700">${BRL(s.liquido)}</td>
+      <td><span class="badge ${s.status==='cancelled'?'Z':s.status==='delivered'?'A':'B'}">${STATUS_PT[s.status]||s.status}</span></td>
+    </tr>`).join('')||'<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">Nenhuma venda no período. Troque o filtro de tempo no topo.</td></tr>';
+  }
+  draw();
+  document.getElementById('salesSearch').oninput=draw;
+  document.querySelectorAll('#salesTable th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(salesSort.k===k)salesSort.dir*=-1;else{salesSort.k=k;salesSort.dir=(['data','valor','liquido','qtd','comissao'].includes(k))?-1:1;}draw();});
 }
 
 function renderConn(){
@@ -403,7 +465,7 @@ function bindEvents(){
   document.getElementById('prodSearch').oninput=renderTable;
   document.querySelectorAll('#prodTable th').forEach(th=>th.onclick=()=>{const k=+th.dataset.k;if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=-1;}renderTable();});
 }
-document.getElementById('fChannel').onchange=e=>{state.channel=e.target.value;renderAll();};
+document.getElementById('fChannel').onchange=e=>{state.channel=e.target.value;if(state.view==='dashboard')renderAll();};
 document.getElementById('fPeriod').onchange=e=>{
   state.period=e.target.value;
   const cr=document.getElementById('customRange');
@@ -416,15 +478,17 @@ document.getElementById('fPeriod').onchange=e=>{
     cr.style.display='inline-flex';
   } else {
     cr.style.display='none';
-    loadDashboard();
+    refresh();
   }
 };
 document.getElementById('applyCustom').onclick=()=>{
   const fv=document.getElementById('fFrom').value, tv=document.getElementById('fTo').value;
   if(!fv||!tv){ alert('Escolha as duas datas (De e Até).'); return; }
   if(fv>tv){ alert('A data inicial não pode ser depois da final.'); return; }
-  loadDashboard();
+  refresh();
 };
+document.getElementById('navDashboard').onclick=()=>goView('dashboard');
+document.getElementById('navVendas').onclick=()=>goView('vendas');
 
 // ===== Configurações (conexão + custos) =====
 let cfgRedirectUri='';
