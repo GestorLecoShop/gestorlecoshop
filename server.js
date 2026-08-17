@@ -286,7 +286,7 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     const totalExib = tp + fComp;                          // total pago pelo comprador
     const margem = totalExib ? (lucro / totalExib) * 100 : 0;
     return {
-      titulo: it.titulo, sku: it.sku, qtd: it.qtd,
+      titulo: it.titulo, sku: it.sku, qtd: it.qtd, img: it.img || '',
       precoUnit: round2(it.unit), total: round2(totalExib),
       liquido: round2(liquido), imposto: round2(imposto),
       custo: round2(custo), custoExtra: 0,
@@ -309,10 +309,33 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
   };
 }
 
+// Busca as miniaturas (fotos) dos produtos em lote via /items multiget
+async function mlItemThumbs(itemIds) {
+  const map = {};
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 20) {
+    const chunk = ids.slice(i, i + 20);
+    try {
+      const res = await mlApi(`/items?ids=${chunk.join(',')}&attributes=id,secure_thumbnail,thumbnail`);
+      (res || []).forEach((r) => {
+        const b = (r && r.body) || r;
+        if (b && b.id) {
+          let u = b.secure_thumbnail || b.thumbnail || '';
+          if (u && u.startsWith('http://')) u = u.replace('http://', 'https://');
+          map[b.id] = u;
+        }
+      });
+    } catch { /* ignora */ }
+  }
+  return map;
+}
+
 // Lista de vendas individuais detalhadas (para a página "Vendas")
 async function mlListSales(fromISO, toISO) {
   const me = await mlApi('/users/me');
   const orders = await mlFetchOrders(me.id, fromISO, toISO);
+  const allIds = orders.flatMap((o) => (o.order_items || []).map((it) => it.item && it.item.id));
+  const thumbs = await mlItemThumbs(allIds);
   const out = [];
   for (const o of orders) {
     const items = o.order_items || [];
@@ -327,6 +350,7 @@ async function mlListSales(fromISO, toISO) {
       qtd: it.quantity || 0,
       unit: it.unit_price || 0,
       comissao: (it.sale_fee || 0) * (it.quantity || 0),
+      img: (it.item && thumbs[it.item.id]) || '',
     }));
     out.push(buildOrder({
       id: o.id, data: o.date_created, dataAprov: o.date_closed, status: o.status,
