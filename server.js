@@ -280,7 +280,8 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     const taxa = conf.imposto != null ? conf.imposto : taxaPadrao;
     const custoUnit = conf.custo != null ? conf.custo : 0;
     const imposto = tp * taxa, custo = custoUnit * it.qtd;
-    const liquido = tp - it.comissao - fVend + desc;      // líquido do marketplace
+    // Cupom/desconto é bancado pelo vendedor => reduz o líquido (é custo, não bônus)
+    const liquido = tp - it.comissao - fVend - desc;      // líquido do marketplace
     const lucro = liquido - imposto - custo;
     const totalExib = tp + fComp;                          // total pago pelo comprador
     const margem = totalExib ? (lucro / totalExib) * 100 : 0;
