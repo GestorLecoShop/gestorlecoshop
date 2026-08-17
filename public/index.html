@@ -114,6 +114,17 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .ord-date{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
 .ord-badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:7px;background:var(--surface2);border:1px solid var(--line);color:var(--txt)}
 .ord-mp{margin-left:auto;font-size:12px;font-weight:750;letter-spacing:.3px}
+/* Selos de envio e pacote — mesmos indicadores do Gestor Seller */
+.ord-date svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-2px}
+.ship{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px;letter-spacing:.4px;white-space:nowrap}
+.ship svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
+.ship.full{background:rgba(34,197,94,.16);color:var(--brand);font-style:italic;letter-spacing:.8px}
+.ship.flex{background:rgba(56,189,248,.16);color:var(--blue)}
+.ship.envios{background:rgba(255,230,0,.13);color:#ffe600;font-weight:700;letter-spacing:.2px}
+.ship.outro{background:var(--surface2);color:var(--muted);border:1px solid var(--line);font-weight:700}
+.ship.alerta{background:rgba(251,113,133,.16);color:var(--rose);font-weight:700;letter-spacing:.2px}
+.pack{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid rgba(34,197,94,.55);color:var(--brand);background:rgba(34,197,94,.08);white-space:nowrap}
+.pack svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
 .ord-tbl th{font-size:10px;padding:10px 12px 6px}
 .ord-tbl td{border-bottom:none;padding:12px}
 .ord-toggle{text-align:center;padding:5px;color:var(--muted);cursor:pointer;border-top:1px solid var(--line);font-size:15px;user-select:none;line-height:1}
@@ -468,6 +479,36 @@ async function loadSales(){
 const ENVIO_PT={fulfillment:'FULL',self_service:'Flex',cross_docking:'Coleta',drop_off:'Agência',xd_drop_off:'Correios',me2:'Mercado Envios',custom:'Combinado'};
 const DOT={delivered:'#22c55e',shipped:'#22c55e',paid:'#fbbf24',cancelled:'#fb7185'};
 function fmtFull(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
+function fmtData(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`;}
+function fmtHora(iso){const d=new Date(iso);if(isNaN(d))return '';const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
+
+// ===== Selos das vendas (mesmos indicadores do Gestor Seller) =====
+const IC_CAL='<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>';
+const IC_HORA='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const IC_RAIO='<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>';
+const IC_PACOTE='<svg viewBox="0 0 24 24"><rect x="2.5" y="13.5" width="7" height="7" rx="1"/><rect x="14.5" y="13.5" width="7" height="7" rx="1"/><rect x="8.5" y="3" width="7" height="7" rx="1"/><path d="M12 10v2M6 13.5v-1.5h12v1.5"/></svg>';
+const IC_CAMINHAO='<svg viewBox="0 0 24 24"><path d="M1 3h13v13H1zM14 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/></svg>';
+const STATUS_PT={paid:'Pago',shipped:'Enviado',delivered:'Entregue',cancelled:'Cancelado',ready_to_ship:'Pronto para enviar',handling:'Em preparação',not_delivered:'Não entregue'};
+// Cada modalidade de envio ganha uma cor própria, como no Gestor Seller
+function seloEnvio(envio){
+  if(envio==='fulfillment') return `<span class="ship full" title="Mercado Envios Full — estoque no ML">${IC_RAIO}FULL</span>`;
+  if(envio==='self_service') return `<span class="ship flex" title="Mercado Envios Flex — entrega no mesmo dia">${IC_CAMINHAO}FLEX</span>`;
+  const nome=ENVIO_PT[envio];
+  if(nome) return `<span class="ship envios" title="Mercado Envios · ${nome}">${nome}</span>`;
+  return '<span class="ship outro">Mercado Envios</span>';
+}
+function cabecalhoVenda(o){
+  const dot=DOT[o.status]||'#8a99ab';
+  return `<div class="ord-head">
+    <span class="ord-dot" style="background:${dot}" title="${STATUS_PT[o.status]||o.status||''}"></span>
+    <span class="ord-date">${IC_CAL}${fmtData(o.data)}</span>
+    <span class="ord-date">${IC_HORA}${fmtHora(o.data)}</span>
+    ${seloEnvio(o.envio)}
+    ${o.pack?`<span class="pack" title="Vários pedidos enviados juntos">${IC_PACOTE}Pacote</span>`:''}
+    ${o.semAssoc?'<span class="ship alerta" title="Anúncio sem produto associado — fora das contas">sem produto</span>':''}
+    <span class="ord-mp">${o.marketplace}</span>
+  </div>`;
+}
 function toggleOrd(el){const o=el.closest('.ord');const e=o.querySelector('.ord-exp');const open=e.style.display!=='none';e.style.display=open?'none':'grid';el.textContent=open?'⌄':'⌃';}
 let salesSort='data';
 function renderSales(demo,error){
@@ -488,11 +529,9 @@ function renderSales(demo,error){
     </div>
     <div id="ordList"></div>`;
   function orderCard(o){
-    const dot=DOT[o.status]||'#8a99ab';
-    const envio=ENVIO_PT[o.envio]||'Mercado Envios';
     const r=o.resumo;
     const linhas=o.itens.map(it=>`<tr>
-      <td><div style="display:flex;align-items:center;gap:10px">${it.img?`<img class="ord-thumb" src="${it.img}" loading="lazy" onerror="this.style.display='none'">`:'<div class="ord-thumb ph"></div>'}<div><div>${it.titulo}</div><div class="sku">SKU: ${it.sku||'—'}</div></div></div></td>
+      <td><div style="display:flex;align-items:center;gap:10px">${it.img?`<img class="ord-thumb" src="${it.img}" loading="lazy" onerror="this.style.display='none'">`:'<div class="ord-thumb ph"></div>'}<div><div>${it.titulo}</div><div class="sku">SKU: ${it.sku||'—'}${it.chave&&it.chave!==it.sku?('  ·  anúncio: '+it.chave):''}</div></div></div></td>
       <td class="num">${it.qtd}</td>
       <td class="num">${BRL(it.total)}</td>
       <td class="num">${BRL(it.precoUnit)}</td>
@@ -504,13 +543,7 @@ function renderSales(demo,error){
       <td style="text-align:center"><span class="badge ${it.margem<0?'Z':it.margem>=25?'A':'C'}">${PCT(it.margem)}</span></td>
     </tr>`).join('');
     return `<div class="ord">
-      <div class="ord-head">
-        <span class="ord-dot" style="background:${dot}"></span>
-        <span class="ord-date">📅 ${fmtFull(o.data)}</span>
-        <span class="ord-badge">${envio}</span>
-        ${o.pack?'<span class="ord-badge">Pacote</span>':''}
-        <span class="ord-mp">${o.marketplace}</span>
-      </div>
+      ${cabecalhoVenda(o)}
       <div class="tbl-wrap"><table class="ord-tbl"><thead><tr>
         <th>Item</th><th class="num">Qtd</th><th class="num">Total</th><th class="num">Preço Unit.</th>
         <th class="num">Líquido do Mkt</th><th class="num">Imposto</th><th class="num">Custo Produto</th>
@@ -580,7 +613,8 @@ function renderSemAssoc(){
   const cards=PENDENTES.map((a,i)=>`<div class="ord">
       <div class="ord-head">
         <span class="ord-dot" style="background:#fb7185"></span>
-        <span class="ord-date">📅 última venda: ${a.ultima?fmtFull(a.ultima):'—'}</span>
+        <span class="ord-date">${IC_CAL}última venda: ${a.ultima?fmtFull(a.ultima):'—'}</span>
+        <span class="ship alerta">sem produto</span>
         <span class="ord-mp">${NOME_CANAL[a.canal]||'Mercado Livre'}</span>
       </div>
       <div class="tbl-wrap"><table class="ord-tbl"><tbody><tr>
