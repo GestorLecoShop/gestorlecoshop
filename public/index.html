@@ -513,6 +513,10 @@ function renderBanner(){
   if(comErro.length){
     b.className='banner err';
     b.innerHTML=`<div>⚠ <b>Erro em ${comErro.map(c=>NOME_CANAL[c]).join(' e ')}:</b> ${comErro.map(c=>s[c+'Error']||'').join(' | ')}</div>`+comErro.map(btn).join('');
+  } else if(conectadas.length>1 && CONTAS_ML.every(c=>s[c]==='connected') && CH.ml && CH.ldmsc && CH.ml.fat===CH.ldmsc.fat && CH.ml.pedidos===CH.ldmsc.pedidos && CH.ml.fat>0){
+    b.className='banner err';
+    b.innerHTML=`<div>⚠ <b>As duas contas parecem ser o mesmo vendedor</b> — os números estão idênticos. Reconecte uma delas usando o login da outra conta do ML.</div>
+      <button class="btn" onclick="openCfg('conexao')">Ver contas</button>`;
   } else if(conectadas.length){
     const ped=conectadas.reduce((t,c)=>t+((CH[c]&&CH[c].pedidos)||0),0);
     b.className='banner live';
@@ -803,12 +807,15 @@ async function renderContas(){
   try{
     const st=await(await fetch('/api/status')).json();
     const contas=st.contas||{};
-    $('cfgContas').innerHTML=Object.keys(contas).map(k=>{
+    const aviso = st.duplicada ? `<div class="banner err" style="margin:0 0 12px">
+      <div>⚠ <b>As duas contas estão ligadas ao mesmo vendedor do Mercado Livre.</b>
+      Saia do ML (ou use uma janela anônima) e clique em Reconectar na conta errada, fazendo login com a outra conta.</div></div>` : '';
+    $('cfgContas').innerHTML = aviso + Object.keys(contas).map(k=>{
       const c=contas[k];
       return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)">
         <span style="width:10px;height:10px;border-radius:50%;background:${c.conectada?'var(--brand)':'#59677a'};flex:none"></span>
         <b>${c.nome}</b>
-        <span class="muted" style="font-size:12px">${c.conectada?'conectada':'não conectada'}</span>
+        <span class="muted" style="font-size:12px">${c.conectada?(c.apelido?('vendedor: '+c.apelido+(c.userId?' · '+c.userId:'')):'conectada'):'não conectada'}</span>
         <span style="margin-left:auto;display:flex;gap:6px">
           <button class="btn ghost" style="padding:5px 10px" onclick="connectML('${k}')">${c.conectada?'Reconectar':'Conectar'}</button>
           ${c.conectada?`<button class="btn ghost" style="padding:5px 10px" onclick="desconectar('${k}')">Desconectar</button>`:''}
