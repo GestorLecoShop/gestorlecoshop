@@ -146,12 +146,12 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
       <div><h1>Visão Geral</h1><div class="sub" id="periodLabel">Carregando…</div></div>
       <div class="filters">
         <select class="sel" id="fPeriod">
-          <option value="hoje">Hoje</option>
+          <option value="hoje" selected>Hoje</option>
           <option value="ontem">Ontem</option>
           <option value="7">Últimos 7 dias</option>
           <option value="15">Últimos 15 dias</option>
           <option value="30">Últimos 30 dias</option>
-          <option value="mes" selected>Este mês</option>
+          <option value="mes">Este mês</option>
           <option value="ant">Mês passado</option>
           <option value="custom">Personalizado…</option>
         </select>
@@ -261,7 +261,7 @@ const BRL=v=>'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximu
 const PCT=v=>(v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
 const ORDER=['ml','amz','shp','mag','tik','loja'];
 let DATA=null, CH={}, DRE={}, ABC={}, PRODUTOS=[], SALES=[];
-let state={channel:'all',period:'mes',trendMetric:'fat',view:'dashboard'};
+let state={channel:'all',period:'hoje',trendMetric:'fat',view:'dashboard'};
 let charts={};
 
 function periodRange(key){
