@@ -94,6 +94,9 @@ function normalizeCosts(c) {
   // Anuncios do marketplace apontando para um produto interno.
   // Ex.: { "MLB123456": "KIT50X" } - a venda desse anuncio usa o custo do KIT50X.
   c.aliases = c.aliases || {};
+  // Anúncios que já venderam e ainda não têm produto. Ficam gravados até serem resolvidos,
+  // por isso o alerta não depende do filtro de período da tela.
+  c.pendentes = c.pendentes || {};
   for (const sku of Object.keys(c.itens)) {
     const it = c.itens[sku];
     if (!Array.isArray(it.custos)) {
@@ -267,6 +270,8 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true, conta = 'ml
   const sellerId = me.id;
   const orders = await mlFetchOrders(sellerId, fromISO, toISO, conta);
 
+  registrarPendentes(orders, conta);
+
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   let pedidosSemAssoc = 0;
   const bySku = {}; // sku -> { nome, un, fat, comissao, custo, imposto }
@@ -343,6 +348,59 @@ const chaveAnuncio = (item) => (item && (item.seller_sku || item.seller_custom_f
 const resolverSku = (chave) => (costs.aliases && costs.aliases[chave]) || chave;
 // Esta associado? = existe produto cadastrado com esse SKU
 const temAssociacao = (chave) => !!(chave && costs.itens[resolverSku(chave)]);
+
+// ---------- Lista global de pendências (independe do filtro de período) ----------
+// Tira da lista tudo que já foi resolvido (produto cadastrado ou anúncio associado)
+function limparPendentes() {
+  let mudou = false;
+  for (const chave of Object.keys(costs.pendentes)) {
+    if (temAssociacao(chave)) { delete costs.pendentes[chave]; mudou = true; }
+  }
+  return mudou;
+}
+// Anota os anúncios sem produto encontrados numa leitura de pedidos
+function registrarPendentes(orders, conta) {
+  let mudou = limparPendentes();
+  for (const o of (orders || [])) {
+    for (const it of (o.order_items || [])) {
+      const chave = chaveAnuncio(it.item);
+      if (!chave || temAssociacao(chave)) continue;
+      const a = costs.pendentes[chave] || {};
+      const data = o.date_created || '';
+      const novo = {
+        titulo: (it.item && it.item.title) || a.titulo || chave,
+        anuncioId: (it.item && it.item.id) || a.anuncioId || '',
+        canal: conta || a.canal || 'ml',
+        ultima: data > (a.ultima || '') ? data : (a.ultima || data),
+      };
+      if (JSON.stringify(a) !== JSON.stringify(novo)) { costs.pendentes[chave] = novo; mudou = true; }
+    }
+  }
+  if (mudou) writeJSON(COSTS_FILE, costs);
+  return mudou;
+}
+const totalPendentes = () => Object.keys(costs.pendentes).length;
+
+// Varredura larga (últimos 90 dias) para achar pendências antigas, sem depender da tela
+let varrendo = false;
+async function varrerPendentes(dias = 90) {
+  if (varrendo) return totalPendentes();
+  varrendo = true;
+  try {
+    const ate = new Date().toISOString();
+    const de = new Date(Date.now() - dias * 86400000).toISOString();
+    for (const conta of contasConectadas()) {
+      try {
+        const me = await mlApi('/users/me', conta);
+        const orders = await mlFetchOrders(me.id, de, ate, conta);
+        registrarPendentes(orders, conta);
+      } catch { /* tenta na próxima vez */ }
+    }
+    costs.varreduraEm = new Date().toISOString();
+    writeJSON(COSTS_FILE, costs);
+  } finally { varrendo = false; }
+  return totalPendentes();
+}
 
 // Retorna o custo vigente de um SKU na data da venda (histórico)
 function costFor(sku, dateISO) {
@@ -451,6 +509,7 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
   const orders = await mlFetchOrders(me.id, fromISO, toISO, conta);
   const allIds = orders.flatMap((o) => (o.order_items || []).map((it) => it.item && it.item.id));
   const thumbs = await mlItemThumbs(allIds, conta);
+  registrarPendentes(orders, conta);
   const out = [];
   for (const o of orders) {
     const items = o.order_items || [];
@@ -663,7 +722,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/products' && req.method === 'POST') {
       const b = await readBody(req);
       if (b.op === 'delete') { delete costs.itens[String(b.sku || '').trim()]; writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true }); }
-      if (b.op === 'save') { upsertProduct(b); writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true }); }
+      if (b.op === 'save') { upsertProduct(b); limparPendentes(); writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true, pendentes: totalPendentes() }); }
       return sendJSON(res, 400, { error: 'op inválida' });
     }
     // Associa um anuncio do marketplace a um produto interno ja existente
@@ -671,11 +730,29 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const chave = String(b.chave || '').trim();
       const sku = String(b.sku || '').trim();
-      if (!chave || !sku) return sendJSON(res, 400, { error: 'informe o anuncio e o produto' });
-      if (!costs.itens[sku]) return sendJSON(res, 400, { error: 'produto nao encontrado: ' + sku });
+      if (!chave || !sku) return sendJSON(res, 400, { error: 'informe o anúncio e o produto' });
+      if (!costs.itens[sku]) return sendJSON(res, 400, { error: 'produto não encontrado: ' + sku });
       costs.aliases[chave] = sku;
+      limparPendentes();
       writeJSON(COSTS_FILE, costs);
-      return sendJSON(res, 200, { ok: true, chave, sku });
+      return sendJSON(res, 200, { ok: true, chave, sku, pendentes: totalPendentes() });
+    }
+    // Lista global de anúncios pendentes (não depende do filtro de período da tela)
+    if (p === '/api/pendentes') {
+      if (u.searchParams.get('varrer') === '1') await varrerPendentes(Number(u.searchParams.get('dias')) || 90);
+      else if (limparPendentes()) writeJSON(COSTS_FILE, costs);
+      const lista = Object.keys(costs.pendentes).map((chave) => ({ chave, ...costs.pendentes[chave] }));
+      lista.sort((a, b) => String(b.ultima || '').localeCompare(String(a.ultima || '')));
+      // busca as fotos dos anúncios (agrupadas por conta)
+      for (const conta of contasConectadas()) {
+        const ids = lista.filter((x) => x.canal === conta && x.anuncioId).map((x) => x.anuncioId);
+        if (!ids.length) continue;
+        try {
+          const thumbs = await mlItemThumbs(ids, conta);
+          lista.forEach((x) => { if (thumbs[x.anuncioId]) x.img = thumbs[x.anuncioId]; });
+        } catch { /* segue sem foto */ }
+      }
+      return sendJSON(res, 200, { pendentes: lista, total: lista.length, varreduraEm: costs.varreduraEm || null });
     }
     if (p === '/api/desassociar' && req.method === 'POST') {
       const b = await readBody(req);
@@ -813,4 +890,7 @@ server.listen(PORT, () => {
     console.log(`  ${CONTAS_ML[c].nome}: ${mlConnected(c) ? 'CONECTADO' : 'nao conectado — abra o site e clique em Conectar'}`);
   }
   if (!ML.clientId) console.log('  Falta configurar o .env (ML_CLIENT_ID / ML_CLIENT_SECRET). Veja o README.\n');
+  // Ao subir, procura anúncios sem produto nos últimos 90 dias (em segundo plano).
+  // Assim o alerta já aparece certo mesmo se o usuário abrir o painel filtrado em "Hoje".
+  setTimeout(() => { varrerPendentes(90).catch(() => {}); }, 3000);
 });
