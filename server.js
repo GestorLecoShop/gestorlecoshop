@@ -266,6 +266,58 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
 
 const round2 = (v) => Math.round(v * 100) / 100;
 
+// Lista de vendas individuais (para a página "Vendas")
+async function mlListSales(fromISO, toISO) {
+  const me = await mlApi('/users/me');
+  const orders = await mlFetchOrders(me.id, fromISO, toISO);
+  return orders.map((o) => {
+    const items = o.order_items || [];
+    const first = items[0] || {};
+    const titulo = (first.item && first.item.title) || '—';
+    const extra = items.length > 1 ? ` +${items.length - 1} item(ns)` : '';
+    const qtd = items.reduce((s, it) => s + (it.quantity || 0), 0);
+    const valor = o.total_amount != null ? o.total_amount : items.reduce((s, it) => s + (it.unit_price || 0) * (it.quantity || 0), 0);
+    const comissao = items.reduce((s, it) => s + (it.sale_fee || 0) * (it.quantity || 0), 0);
+    const sku = (first.item && (first.item.seller_sku || first.item.seller_custom_field)) || '';
+    return {
+      id: String(o.id),
+      data: o.date_created,
+      canal: 'ml',
+      produto: titulo + extra,
+      sku,
+      qtd,
+      valor: round2(valor),
+      comissao: round2(comissao),
+      liquido: round2(valor - comissao),
+      status: o.status,
+    };
+  });
+}
+
+// Vendas de exemplo (modo demonstração) geradas a partir dos produtos demo
+function demoSales() {
+  const prods = (DEMO && DEMO.produtos) ? DEMO.produtos.filter((p) => p[2] > 0).slice(0, 12) : [];
+  const now = Date.now();
+  const st = ['paid', 'shipped', 'delivered'];
+  return prods.map((p, i) => {
+    const qtd = 1 + (i % 3);
+    const valor = round2((p[3] / p[2]) * qtd);
+    const comissao = round2(valor * 0.14);
+    return {
+      id: 'DEMO' + (2000000000 + i),
+      data: new Date(now - i * 36e5 * 5).toISOString(),
+      canal: 'ml',
+      produto: p[0],
+      sku: p[1],
+      qtd,
+      valor,
+      comissao,
+      liquido: round2(valor - comissao),
+      status: st[i % 3],
+    };
+  });
+}
+
 // Classifica curva ABC (Pareto por faturamento)
 function classifyABC(produtos) {
   const sorted = [...produtos].sort((a, b) => b[3] - a[3]);
@@ -417,6 +469,19 @@ const server = http.createServer(async (req, res) => {
       const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
       const data = await buildDashboard({ from, to });
       return sendJSON(res, 200, data);
+    }
+    if (p === '/api/sales') {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
+      const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
+      if (!mlConnected()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
+      try {
+        const sales = await mlListSales(from, to);
+        return sendJSON(res, 200, { sales, demo: false });
+      } catch (e) {
+        return sendJSON(res, 200, { sales: [], demo: false, error: String(e.message || e) });
+      }
     }
     if (p === '/api/disconnect/ml') { delete tokens.ml; writeJSON(TOKENS_FILE, tokens); return sendJSON(res, 200, { ok: true }); }
     if (p === '/') return serveStatic(res, 'index.html');
