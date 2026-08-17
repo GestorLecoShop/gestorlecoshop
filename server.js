@@ -499,33 +499,35 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
   };
 }
 
-// Busca as miniaturas (fotos) dos produtos em lote via /items multiget
-async function mlItemThumbs(itemIds, conta = 'ml') {
-  const map = {};
+// Busca fotos e tipo de envio dos anúncios em lote via /items multiget.
+// O pedido não traz o tipo de logística (FULL / Flex / Coleta...), o anúncio traz.
+async function mlItemInfo(itemIds, conta = 'ml') {
+  const thumbs = {}, envios = {};
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   for (let i = 0; i < ids.length; i += 20) {
     const chunk = ids.slice(i, i + 20);
     try {
-      const res = await mlApi(`/items?ids=${chunk.join(',')}&attributes=id,secure_thumbnail,thumbnail`, conta);
+      const res = await mlApi(`/items?ids=${chunk.join(',')}&attributes=id,secure_thumbnail,thumbnail,shipping`, conta);
       (res || []).forEach((r) => {
         const b = (r && r.body) || r;
-        if (b && b.id) {
-          let u = b.secure_thumbnail || b.thumbnail || '';
-          if (u && u.startsWith('http://')) u = u.replace('http://', 'https://');
-          map[b.id] = u;
-        }
+        if (!b || !b.id) return;
+        let u = b.secure_thumbnail || b.thumbnail || '';
+        if (u && u.startsWith('http://')) u = u.replace('http://', 'https://');
+        thumbs[b.id] = u;
+        if (b.shipping && b.shipping.logistic_type) envios[b.id] = b.shipping.logistic_type;
       });
     } catch { /* ignora */ }
   }
-  return map;
+  return { thumbs, envios };
 }
+const mlItemThumbs = async (ids, conta) => (await mlItemInfo(ids, conta)).thumbs;
 
 // Lista de vendas individuais detalhadas (para a página "Vendas")
 async function mlListSales(fromISO, toISO, conta = 'ml') {
   const me = await mlApi('/users/me', conta);
   const orders = await mlFetchOrders(me.id, fromISO, toISO, conta);
   const allIds = orders.flatMap((o) => (o.order_items || []).map((it) => it.item && it.item.id));
-  const thumbs = await mlItemThumbs(allIds, conta);
+  const { thumbs, envios } = await mlItemInfo(allIds, conta);
   registrarPendentes(orders, conta);
   guardarFotos(orders, thumbs);
   const out = [];
@@ -549,7 +551,10 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
     }));
     out.push(buildOrder({
       id: o.id, data: o.date_created, dataAprov: o.date_closed, status: o.status,
-      envio: (o.shipping && o.shipping.logistic_type) || '', pack: !!o.pack_id,
+      // o pedido raramente traz logistic_type; o anúncio traz (FULL, Flex, Coleta, Agência...)
+      envio: (o.shipping && o.shipping.logistic_type)
+        || items.map((it) => it.item && envios[it.item.id]).find(Boolean) || '',
+      pack: !!o.pack_id,
       itemsRaw, freteVend, freteComp, descontos, conta,
     }));
   }
