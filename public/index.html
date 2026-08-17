@@ -37,6 +37,23 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .banner.live{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.4)}
 .banner.err{background:rgba(251,113,133,.10);border:1px solid rgba(251,113,133,.4)}
 .pill-n{margin-left:auto;background:var(--rose);color:#0f1720;font-size:11px;font-weight:800;line-height:1;padding:3px 7px;border-radius:999px}
+/* Quadro de associação anúncio -> produto */
+.as-anuncio{display:flex;gap:14px;align-items:center;padding:0 0 16px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.as-thumb{width:64px;height:64px;border-radius:10px;object-fit:contain;background:#fff;border:1px solid var(--line);flex:none}
+.as-thumb.sm{width:48px;height:48px;border-radius:8px}
+.as-thumb.ph{background:var(--surface2);position:relative}
+.as-thumb.ph::after{content:'📦';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;opacity:.5}
+.as-tit{font-size:16px;font-weight:700;line-height:1.3}
+.as-busca{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.as-busca .search{width:320px;max-width:100%}
+.as-lista{max-height:360px;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+.as-item{display:flex;align-items:center;gap:12px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.as-item:hover{border-color:var(--brand)}
+.as-info{flex:1;min-width:0}
+.as-nome{font-weight:650;font-size:13px;line-height:1.35}
+.as-custos{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:3px}
+.as-custos b{color:var(--txt)}
+@media(max-width:640px){.as-busca .search{width:100%}.as-item{flex-wrap:wrap}}
 .btn{background:linear-gradient(135deg,var(--brand),var(--brand-d));color:#04140a;border:none;padding:9px 16px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:8px}
 .btn.ghost{background:var(--surface2);color:var(--txt);border:1px solid var(--line)}
 .top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:22px}
@@ -290,17 +307,19 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 </div>
 
 <div class="modal" id="assocModal">
-  <div class="box" style="max-width:560px">
+  <div class="box" style="max-width:700px">
     <button class="close-x" onclick="fecharAssociar()">&times;</button>
-    <h2>Associar anúncio a um produto</h2>
-    <div class="mhint">Escolha o produto já cadastrado que corresponde a este anúncio. A partir daí todas as vendas dele passam a entrar nas contas.</div>
-    <input type="hidden" id="asChave">
-    <div class="field"><label>Anúncio</label><div class="tip" id="asAnuncio" style="margin-top:0"></div></div>
-    <div class="field"><label>Produto cadastrado</label><select class="sel" id="asSku" style="width:100%"></select></div>
+    <h2>Associar produto</h2>
+    <div class="mhint">Escolha o produto interno que corresponde a este anúncio. Vale para as vendas passadas e futuras.</div>
+    <div class="as-anuncio" id="asAnuncio"></div>
+    <div class="as-busca">
+      <div><b style="font-size:14px">Produtos internos</b><div class="tip" id="asCont" style="margin-top:2px"></div></div>
+      <input class="search" id="asBusca" placeholder="Pesquisar por nome, SKU ou EAN…">
+    </div>
+    <div class="as-lista" id="asLista"></div>
     <div class="mrow">
       <span class="ok-msg" id="asMsg"></span>
       <button class="btn ghost" onclick="fecharAssociar()">Cancelar</button>
-      <button class="btn" onclick="salvarAssociacao()">Associar</button>
     </div>
   </div>
 </div>
@@ -430,7 +449,7 @@ function goView(v){
   document.getElementById('navVendas').classList.toggle('on',v==='vendas');
   const np=document.getElementById('navProdutos'); if(np) np.classList.toggle('on',v==='produtos');
   const ns=document.getElementById('navSemAssoc'); if(ns) ns.classList.toggle('on',v==='semassoc');
-  document.querySelector('.top h1').textContent = v==='vendas'?'Vendas':v==='produtos'?'Produtos':v==='semassoc'?'Vendas sem associação':'Visão Geral';
+  document.querySelector('.top h1').textContent = v==='vendas'?'Vendas':v==='produtos'?'Produtos':v==='semassoc'?'Anúncios sem associação':'Visão Geral';
   const f=document.querySelector('.filters'); if(f) f.style.display = (v==='produtos'||v==='semassoc')?'none':'flex';
   refresh();
 }
@@ -581,26 +600,61 @@ function criarDoAnuncio(i){
   const a=PENDENTES[i]; if(!a) return;
   openProd({sku:a.chave, nome:a.titulo, custo:'', custoExtra:'', imposto:TAXA_PADRAO, naoCadastrado:true});
 }
+let AS_ANUNCIO=null, AS_PRODS=[], AS_FILTRADOS=[];
 async function abrirAssociar(i){
   const a=PENDENTES[i]; if(!a) return;
-  document.getElementById('asChave').value=a.chave;
-  document.getElementById('asAnuncio').textContent=a.titulo+(a.chave?('  ·  '+a.chave):'');
+  AS_ANUNCIO=a;
+  document.getElementById('asAnuncio').innerHTML=
+    (a.img?`<img class="as-thumb" src="${a.img}" onerror="this.style.display='none'">`:'<div class="as-thumb ph"></div>')+
+    `<div><div class="as-tit">${a.titulo}</div>
+     <div class="sku">SKU externo: ${a.chave}${a.anuncioId&&a.anuncioId!==a.chave?('  ·  '+a.anuncioId):''}</div></div>`;
   document.getElementById('asMsg').textContent='';
+  document.getElementById('asBusca').value='';
+  document.getElementById('asCont').textContent='';
+  document.getElementById('asLista').innerHTML='<div class="loading" style="padding:30px">Carregando produtos…</div>';
+  document.getElementById('assocModal').classList.add('open');
   try{
     const j=await(await fetch('/api/products')).json();
-    const lista=(j.itens||[]).slice().sort((x,y)=>String(x.nome||x.sku).localeCompare(String(y.nome||y.sku)));
-    document.getElementById('asSku').innerHTML='<option value="">— escolha o produto —</option>'+
-      lista.map(p=>`<option value="${p.sku}">${(p.nome||p.sku)} · ${p.sku} · ${BRL(p.custo)}</option>`).join('');
-  }catch(e){}
-  document.getElementById('assocModal').classList.add('open');
+    AS_PRODS=(j.itens||[]).slice().sort((x,y)=>String(x.nome||x.sku).localeCompare(String(y.nome||y.sku)));
+  }catch(e){ AS_PRODS=[]; }
+  desenharAssoc();
+  setTimeout(()=>{const b=document.getElementById('asBusca'); if(b) b.focus();},60);
+}
+function desenharAssoc(){
+  const q=(document.getElementById('asBusca').value||'').toLowerCase().trim();
+  const termos=q.split(/\s+/).filter(Boolean);
+  AS_FILTRADOS = termos.length
+    ? AS_PRODS.filter(p=>{const alvo=((p.nome||'')+' '+p.sku+' '+(p.ean||'')).toLowerCase(); return termos.every(t=>alvo.includes(t));})
+    : AS_PRODS;
+  document.getElementById('asCont').textContent = termos.length
+    ? `${AS_FILTRADOS.length} de ${AS_PRODS.length} produtos`
+    : `${AS_PRODS.length} produtos cadastrados`;
+  const L=document.getElementById('asLista');
+  if(!AS_FILTRADOS.length){
+    L.innerHTML=`<div class="loading" style="padding:26px">Nenhum produto encontrado${termos.length?' para essa busca':''}.
+      <div style="margin-top:14px"><button class="btn" onclick="criarDoModal()">Criar produto a partir deste anúncio</button></div></div>`;
+    return;
+  }
+  L.innerHTML=AS_FILTRADOS.slice(0,400).map((p,i)=>`<div class="as-item">
+      ${p.img?`<img class="as-thumb sm" src="${p.img}" loading="lazy" onerror="this.style.display='none'">`:'<div class="as-thumb sm ph"></div>'}
+      <div class="as-info">
+        <div class="as-nome">${p.sku} | ${p.nome||p.sku}</div>
+        <div class="as-custos"><span>Custo do produto: <b>${BRL(p.custo)}</b></span><span>Custo extra: <b>${BRL(p.custoExtra)}</b></span></div>
+      </div>
+      <button class="btn" onclick="associarCom(${i})">Associar</button>
+    </div>`).join('')
+    + (AS_FILTRADOS.length>400?'<div class="tip" style="text-align:center;padding:10px">Mostrando os 400 primeiros — use a busca para afinar.</div>':'');
 }
 function fecharAssociar(){ document.getElementById('assocModal').classList.remove('open'); }
-async function salvarAssociacao(){
-  const chave=document.getElementById('asChave').value;
-  const sku=document.getElementById('asSku').value;
-  if(!sku){ document.getElementById('asMsg').textContent='Escolha um produto.'; return; }
+function criarDoModal(){
+  const a=AS_ANUNCIO; fecharAssociar();
+  if(a) openProd({sku:a.chave, nome:a.titulo, custo:'', custoExtra:'', imposto:TAXA_PADRAO, naoCadastrado:true});
+}
+async function associarCom(i){
+  const p=AS_FILTRADOS[i]; if(!p||!AS_ANUNCIO) return;
   document.getElementById('asMsg').textContent='Associando…';
-  const r=await(await fetch('/api/associar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chave,sku})})).json();
+  const r=await(await fetch('/api/associar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({chave:AS_ANUNCIO.chave, sku:p.sku})})).json();
   if(r.ok){ fecharAssociar(); await carregarPendentes(); renderSemAssoc(); }
   else document.getElementById('asMsg').textContent=r.error||'Erro ao associar.';
 }
@@ -1022,6 +1076,9 @@ goView=function(v){ _goViewOrig(v); document.querySelectorAll('#tabbar button').
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
 }
+
+document.getElementById('asBusca').oninput=desenharAssoc;
+document.getElementById('assocModal').addEventListener('click',e=>{if(e.target.id==='assocModal')fecharAssociar();});
 
 loadDashboard();
 carregarPendentes();   // alerta global de anúncios sem produto (independe do período)
