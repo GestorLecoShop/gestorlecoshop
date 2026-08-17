@@ -97,6 +97,8 @@ function normalizeCosts(c) {
   // Anúncios que já venderam e ainda não têm produto. Ficam gravados até serem resolvidos,
   // por isso o alerta não depende do filtro de período da tela.
   c.pendentes = c.pendentes || {};
+  // Foto de cada SKU, aproveitada das vendas — serve para a tela de associação
+  c.fotos = c.fotos || {};
   for (const sku of Object.keys(c.itens)) {
     const it = c.itens[sku];
     if (!Array.isArray(it.custos)) {
@@ -381,6 +383,21 @@ function registrarPendentes(orders, conta) {
 }
 const totalPendentes = () => Object.keys(costs.pendentes).length;
 
+// Guarda a foto do anúncio no SKU correspondente (usada na tela de associação)
+function guardarFotos(orders, thumbs) {
+  let mudou = false;
+  for (const o of (orders || [])) {
+    for (const it of (o.order_items || [])) {
+      const id = it.item && it.item.id;
+      const sku = resolverSku(chaveAnuncio(it.item));
+      const url = id && thumbs[id];
+      if (!sku || !url || costs.fotos[sku] === url) continue;
+      costs.fotos[sku] = url; mudou = true;
+    }
+  }
+  if (mudou) writeJSON(COSTS_FILE, costs);
+}
+
 // Varredura larga (últimos 90 dias) para achar pendências antigas, sem depender da tela
 let varrendo = false;
 async function varrerPendentes(dias = 90) {
@@ -510,6 +527,7 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
   const allIds = orders.flatMap((o) => (o.order_items || []).map((it) => it.item && it.item.id));
   const thumbs = await mlItemThumbs(allIds, conta);
   registrarPendentes(orders, conta);
+  guardarFotos(orders, thumbs);
   const out = [];
   for (const o of orders) {
     const items = o.order_items || [];
@@ -715,6 +733,7 @@ const server = http.createServer(async (req, res) => {
           sku, nome: conf.nome || '', ean: conf.ean || '',
           imposto: conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.09),
           custo: cf.custo, custoExtra: cf.custoExtra, versoes: (conf.custos || []).length,
+          img: costs.fotos[sku] || '',
         };
       });
       return sendJSON(res, 200, { taxaPadrao: costs.taxaPadrao, itens });
