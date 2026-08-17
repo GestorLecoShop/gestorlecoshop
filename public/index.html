@@ -280,7 +280,6 @@ function periodRange(key){
     single=(fv&&tv&&fv===tv);
   }
   else {from=new Date(y,m,1);to=now;}
-  // ISO no fuso local (-03:00), sem o deslocamento do toISOString (UTC)
   const p=n=>String(n).padStart(2,'0');
   const iso=x=>x.getFullYear()+'-'+p(x.getMonth()+1)+'-'+p(x.getDate())+'T'+p(x.getHours())+':'+p(x.getMinutes())+':'+p(x.getSeconds())+'.000-03:00';
   const lbl=x=>x.toLocaleDateString('pt-BR');
@@ -381,7 +380,7 @@ function renderSales(demo,error){
         <div class="brk">
           <div class="r"><span class="lbl2">Total do Pedido</span><b class="pos">+ ${BRL(r.totalProduto)}</b></div>
           <div class="r"><span class="lbl2">Frete (pago pelo vendedor)</span><b class="neg">– ${BRL(r.freteVend)}</b></div>
-          ${r.descontos?`<div class="r"><span class="lbl2">Descontos e Bônus</span><b class="pos">+ ${BRL(r.descontos)}</b></div>`:''}
+          ${r.descontos?`<div class="r"><span class="lbl2">Cupom / Desconto (pago pelo vendedor)</span><b class="neg">– ${BRL(r.descontos)}</b></div>`:''}
           ${r.freteComp?`<div class="r"><span class="lbl2">Frete (pago pelo comprador)</span><b class="muted">repassado</b></div>`:''}
           <div class="r"><span class="lbl2">Comissão</span><b class="neg">– ${BRL(r.comissao)}</b></div>
           <div class="r tot"><span>Líquido do Marketplace</span><b>${BRL(r.liquido)}</b></div>
@@ -534,7 +533,6 @@ document.getElementById('fPeriod').onchange=e=>{
   state.period=e.target.value;
   const cr=document.getElementById('customRange');
   if(state.period==='custom'){
-    // pré-preenche com o mês atual e mostra os campos; só busca ao clicar em Aplicar
     const now=new Date(), p=n=>String(n).padStart(2,'0');
     const fmt=x=>x.getFullYear()+'-'+p(x.getMonth()+1)+'-'+p(x.getDate());
     if(!document.getElementById('fFrom').value) document.getElementById('fFrom').value=fmt(new Date(now.getFullYear(),now.getMonth(),1));
@@ -571,7 +569,6 @@ function copyRedirect(){navigator.clipboard&&navigator.clipboard.writeText(cfgRe
 async function saveConfig(){
   const clientId=$('cfgClientId').value.trim(); let secret=$('cfgSecret').value.trim();
   if(secret==='••••••••')secret='';
-  if(!clientId||(!secret&&$('cfgSecret').value!=='••••••••'&&!secret)){}
   const body={clientId,redirectUri:cfgRedirectUri};
   if(secret)body.clientSecret=secret;
   $('cfgMsg').textContent='Salvando…';
@@ -588,7 +585,6 @@ async function loadCosts(){
   const c=await(await fetch('/api/costs')).json();
   $('cfgTaxaPadrao').value=((c.taxaPadrao??0.09)*100).toFixed(1);
   const itens=c.itens||{};
-  // une SKUs do arquivo de custos + SKUs que apareceram nas vendas
   const map={};
   Object.keys(itens).forEach(sku=>map[sku]={sku,nome:sku,custo:itens[sku].custo,imp:itens[sku].imposto});
   PRODUTOS.forEach(p=>{const sku=p[1];if(!map[sku])map[sku]={sku,nome:p[0],custo:null,imp:null};else map[sku].nome=p[0];});
