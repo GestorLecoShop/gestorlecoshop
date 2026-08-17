@@ -64,6 +64,12 @@ const writeJSON = (f, o) => fs.writeFileSync(f, JSON.stringify(o, null, 2));
 let tokens = readJSON(TOKENS_FILE, {});          // { ml: { access_token, refresh_token, expires_at, user_id } }
 let costs = readJSON(COSTS_FILE, { taxaPadrao: 0.09, itens: {} });
 
+// Em hospedagem o disco é temporário: se não há token salvo mas existe
+// ML_REFRESH_TOKEN nas variáveis de ambiente, restaura a conexão a partir dele.
+if ((!tokens.ml || !tokens.ml.refresh_token) && ENV.ML_REFRESH_TOKEN) {
+  tokens.ml = { refresh_token: ENV.ML_REFRESH_TOKEN, expires_at: 0 };
+}
+
 // ---------- HTTP helper (Promise) ----------
 function request(method, urlStr, { headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
@@ -139,6 +145,8 @@ async function mlExchangeCode(code) {
     user_id: json.user_id,
   };
   writeJSON(TOKENS_FILE, tokens);
+  // Em hospedagem, salve este valor na variável ML_REFRESH_TOKEN para não perder a conexão em reinícios.
+  console.log('\n===== ML_REFRESH_TOKEN (guarde nas variáveis de ambiente do host) =====\n' + json.refresh_token + '\n=======================================================================\n');
 }
 
 async function mlApi(pathStr) {
@@ -340,7 +348,23 @@ const readBody = (req) => new Promise((resolve) => {
   req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve({}); } });
 });
 
+// Proteção por senha (para o painel ficar privado quando publicado na internet).
+// Só ativa se APP_PASSWORD estiver definido. Usa autenticação básica do navegador.
+function checkAuth(req, res) {
+  if (!ENV.APP_PASSWORD) return true; // sem senha definida => aberto (ok para uso local)
+  const h = req.headers.authorization || '';
+  const b64 = h.split(' ')[1];
+  if (b64) {
+    const pass = Buffer.from(b64, 'base64').toString().split(':').slice(1).join(':');
+    if (pass === ENV.APP_PASSWORD) return true;
+  }
+  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Leco Shop"', 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Acesso restrito. Informe a senha.');
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
+  if (!checkAuth(req, res)) return;
   const u = new URL(req.url, `http://localhost:${PORT}`);
   const p = u.pathname;
   try {
