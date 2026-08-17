@@ -1,0 +1,36 @@
+{
+  "name": "Leco Shop · Gestão de Vendas",
+  "short_name": "Leco Shop",
+  "description": "Painel de vendas e lucro dos marketplaces da Leco Shop",
+  "start_url": "/?fonte=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1720",
+  "theme_color": "#0f1720",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Vendas",
+      "url": "/?ir=vendas"
+    },
+    {
+      "name": "Produtos",
+      "url": "/?ir=produtos"
+    }
+  ]
+}
