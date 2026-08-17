@@ -183,6 +183,7 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
         <select class="sel" id="fChannel">
           <option value="all">Todos os canais</option>
           <option value="ml">Mercado Livre</option>
+          <option value="ldmsc">LDM SC</option>
           <option value="amz">Amazon</option>
           <option value="shp">Shopee</option>
           <option value="mag">Magalu</option>
@@ -227,10 +228,15 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
         <div class="copy" id="cfgRedirect" onclick="copyRedirect()" title="clique para copiar">—</div>
         <div class="tip">Em developers.mercadolivre.com.br → seu app → Editar → URIs de redirect.</div>
       </div>
+      <div class="field">
+        <label>Contas do Mercado Livre</label>
+        <div id="cfgContas"></div>
+        <div class="tip">Use o mesmo app do ML nas duas contas — muda só quem faz o login. Conecte cada uma na sua própria conta do Mercado Livre.</div>
+      </div>
       <div class="mrow">
         <span class="ok-msg" id="cfgMsg"></span>
         <button class="btn ghost" onclick="closeCfg()">Fechar</button>
-        <button class="btn" onclick="saveConfig()">Salvar e conectar</button>
+        <button class="btn" onclick="saveConfig()">Salvar credenciais</button>
       </div>
     </div>
 
@@ -334,7 +340,8 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 <script>
 const BRL=v=>'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const PCT=v=>(v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
-const ORDER=['ml','amz','shp','mag','tik','loja'];
+const ORDER=['ml','ldmsc','amz','shp','mag','tik','loja'];
+const CONTAS_ML=['ml','ldmsc'];   // contas do Mercado Livre (cada uma é um canal)
 let DATA=null, CH={}, DRE={}, ABC={}, PRODUTOS=[], SALES=[];
 let state={channel:'all',period:'hoje',trendMetric:'fat',view:'dashboard'};
 let charts={};
@@ -374,7 +381,8 @@ async function loadDashboard(){
   document.getElementById('content').innerHTML='<div class="loading">Buscando dados…</div>';
   const r=await fetch(`/api/dashboard?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}`);
   DATA=await r.json();
-  CH=DATA.channels||{}; DRE=DATA.dreDetail||{}; ABC=DATA.abc||{}; PRODUTOS=(DATA.produtos||[]).map(p=>p.slice());
+  CH=DATA.channels||{}; DRE=DATA.dreDetail||{};
+  aplicarCanal();
   renderBanner(); renderConn(); mount();
 }
 
@@ -394,7 +402,8 @@ async function loadSales(){
   document.getElementById('periodLabel').textContent=pr.label;
   document.getElementById('content').innerHTML='<div class="loading">Buscando vendas…</div>';
   try{
-    const r=await fetch(`/api/sales?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}`);
+    const canal = CONTAS_ML.includes(state.channel) ? '&canal='+state.channel : '';
+    const r=await fetch(`/api/sales?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}${canal}`);
     const j=await r.json(); SALES=j.sales||[];
     renderSales(j.demo, j.error);
   }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
@@ -492,21 +501,37 @@ function renderConn(){
   const item=(k,label)=>{const st=s[k]; const cls=st==='connected'?'on-c':st==='error'?'err-c':'off-c';
     const txt=st==='connected'?'conectado':st==='error'?'erro':st==='soon'?'em breve':'desconectado';
     return `<div class="row"><span class="dot ${cls}"></span>${label}: <b style="margin-left:auto">${txt}</b></div>`;};
-  document.getElementById('connBox').innerHTML=item('ml','Mercado Livre')+item('amz','Amazon')+item('shp','Shopee')+item('mag','Magalu')+item('tik','TikTok');
+  document.getElementById('connBox').innerHTML=item('ml','Mercado Livre')+item('ldmsc','LDM SC')+item('amz','Amazon')+item('shp','Shopee')+item('mag','Magalu')+item('tik','TikTok');
 }
+const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC'};
 function renderBanner(){
   const b=document.getElementById('banner'); const s=DATA.status||{};
-  if(s.ml==='connected'){
-    const ped=(CH.ml&&CH.ml.pedidos)||0;
-    b.className='banner live'; b.innerHTML=`<div>✅ <b>Mercado Livre conectado</b> — ${ped} pedidos no período, dados ao vivo.</div>
-      <button class="btn ghost" onclick="connectML()">Reconectar</button>`;
-  } else if(s.ml==='error'){
-    b.className='banner err'; b.innerHTML=`<div>⚠ <b>Erro ao ler o Mercado Livre:</b> ${s.mlError||''}. Reconecte.</div><button class="btn" onclick="connectML()">Conectar Mercado Livre</button>`;
+  const conectadas=CONTAS_ML.filter(c=>s[c]==='connected');
+  const comErro=CONTAS_ML.filter(c=>s[c]==='error');
+  const faltando=CONTAS_ML.filter(c=>s[c]==='disconnected');
+  const btn=(c)=>`<button class="btn${conectadas.length?' ghost':''}" onclick="connectML('${c}')">${s[c]==='connected'?'Reconectar':'Conectar'} ${NOME_CANAL[c]}</button>`;
+  if(comErro.length){
+    b.className='banner err';
+    b.innerHTML=`<div>⚠ <b>Erro em ${comErro.map(c=>NOME_CANAL[c]).join(' e ')}:</b> ${comErro.map(c=>s[c+'Error']||'').join(' | ')}</div>`+comErro.map(btn).join('');
+  } else if(conectadas.length){
+    const ped=conectadas.reduce((t,c)=>t+((CH[c]&&CH[c].pedidos)||0),0);
+    b.className='banner live';
+    b.innerHTML=`<div>✅ <b>${conectadas.map(c=>NOME_CANAL[c]).join(' e ')} conectado${conectadas.length>1?'s':''}</b> — ${ped} pedidos no período, dados ao vivo.</div>`
+      + faltando.map(btn).join('') + `<button class="btn ghost" onclick="openCfg('conexao')">Contas</button>`;
   } else {
-    b.className='banner demo'; b.innerHTML=`<div>🟡 <b>Modo demonstração</b> — mostrando dados de exemplo. Conecte sua conta para ver as vendas reais.</div><button class="btn" onclick="connectML()">Conectar Mercado Livre</button>`;
+    b.className='banner demo';
+    b.innerHTML=`<div>🟡 <b>Modo demonstração</b> — mostrando dados de exemplo. Conecte suas contas para ver as vendas reais.</div>`+CONTAS_ML.map(btn).join('');
   }
 }
 
+// Ao trocar o canal, a lista de produtos e a curva ABC passam a ser as daquele canal
+function aplicarCanal(){
+  if(!DATA) return;
+  const porCanal=DATA.produtosPorCanal||{}, abcPorCanal=DATA.abcPorCanal||{};
+  const usaCanal = state.channel!=='all' && porCanal[state.channel];
+  PRODUTOS=(usaCanal ? porCanal[state.channel] : (DATA.produtos||[])).map(p=>p.slice());
+  ABC=(usaCanal ? abcPorCanal[state.channel] : DATA.abc)||{};
+}
 function activeChannelKeys(){ return state.channel==='all'?ORDER:[state.channel]; }
 function agg(keys){let t={fat:0,liq:0,lb:0,ads:0,lucro:0};keys.forEach(k=>{const c=CH[k];if(!c)return;t.fat+=c.fat||0;t.liq+=c.liq||0;t.lb+=c.lucroBruto||0;t.ads+=c.ads||0;t.lucro+=c.lucro||0;});return t;}
 
@@ -610,7 +635,11 @@ function bindEvents(){
   document.getElementById('prodSearch').oninput=renderTable;
   document.querySelectorAll('#prodTable th').forEach(th=>th.onclick=()=>{const k=+th.dataset.k;if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=-1;}renderTable();});
 }
-document.getElementById('fChannel').onchange=e=>{state.channel=e.target.value;if(state.view==='dashboard')renderAll();};
+document.getElementById('fChannel').onchange=e=>{
+  state.channel=e.target.value;
+  if(state.view==='vendas'){ loadSales(); return; }
+  aplicarCanal(); if(state.view==='dashboard') renderAll();
+};
 document.getElementById('fPeriod').onchange=e=>{
   state.period=e.target.value;
   const cr=document.getElementById('customRange');
@@ -768,6 +797,24 @@ async function openCfg(tab){
   const c=await(await fetch('/api/config')).json();
   $('cfgClientId').value=c.clientId||''; $('cfgSecret').value=c.hasSecret?'••••••••':'';
   cfgRedirectUri=c.redirectUri||''; $('cfgRedirect').textContent=cfgRedirectUri;
+  renderContas();
+}
+async function renderContas(){
+  try{
+    const st=await(await fetch('/api/status')).json();
+    const contas=st.contas||{};
+    $('cfgContas').innerHTML=Object.keys(contas).map(k=>{
+      const c=contas[k];
+      return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)">
+        <span style="width:10px;height:10px;border-radius:50%;background:${c.conectada?'var(--brand)':'#59677a'};flex:none"></span>
+        <b>${c.nome}</b>
+        <span class="muted" style="font-size:12px">${c.conectada?'conectada':'não conectada'}</span>
+        <span style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn ghost" style="padding:5px 10px" onclick="connectML('${k}')">${c.conectada?'Reconectar':'Conectar'}</button>
+          ${c.conectada?`<button class="btn ghost" style="padding:5px 10px" onclick="desconectar('${k}')">Desconectar</button>`:''}
+        </span></div>`;
+    }).join('');
+  }catch(e){ $('cfgContas').innerHTML='<span class="muted">Não foi possível carregar as contas.</span>'; }
 }
 function closeCfg(){$('cfgModal').classList.remove('open');}
 function copyRedirect(){navigator.clipboard&&navigator.clipboard.writeText(cfgRedirectUri);$('cfgRedirect').textContent=cfgRedirectUri+'  ✓ copiado';setTimeout(()=>$('cfgRedirect').textContent=cfgRedirectUri,1500);}
@@ -779,13 +826,19 @@ async function saveConfig(){
   if(secret)body.clientSecret=secret;
   $('cfgMsg').textContent='Salvando…';
   const r=await(await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
-  if(r.ok){ $('cfgMsg').textContent='Salvo! Redirecionando para o login do ML…'; setTimeout(()=>location.href='/auth/ml',700); }
+  if(r.ok){ $('cfgMsg').textContent='Salvo! Agora conecte cada conta abaixo.'; renderContas(); }
   else $('cfgMsg').textContent='Erro ao salvar.';
 }
-async function connectML(){
+async function connectML(conta){
+  conta = conta || 'ml';
   const c=await(await fetch('/api/config')).json();
   if(!c.clientId||!c.hasSecret){ openCfg('conexao'); $('cfgMsg').textContent='Preencha o Client ID e o Secret primeiro.'; }
-  else location.href='/auth/ml';
+  else location.href='/auth/ml?conta='+encodeURIComponent(conta);
+}
+async function desconectar(conta){
+  if(!confirm('Desconectar a conta '+(NOME_CANAL[conta]||conta)+'?')) return;
+  await fetch('/api/disconnect/'+conta);
+  location.reload();
 }
 async function loadCosts(){
   const c=await(await fetch('/api/costs')).json();
@@ -818,6 +871,7 @@ $('navConfig').onclick=()=>openCfg('conexao');
 $('cfgModal').addEventListener('click',e=>{if(e.target.id==='cfgModal')closeCfg();});
 
 // ===== App de celular (PWA) =====
+// barra inferior: espelha a navegação lateral quando instalado
 document.querySelectorAll('#tabbar button').forEach(b=>b.onclick=()=>{
   const v=b.dataset.v;
   document.querySelectorAll('#tabbar button').forEach(x=>x.classList.toggle('on',x===b));
