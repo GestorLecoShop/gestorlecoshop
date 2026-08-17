@@ -178,6 +178,14 @@ async function mlExchangeCode(code, conta = 'ml') {
     user_id: json.user_id,
   };
   writeJSON(TOKENS_FILE, tokens);
+  // Guarda QUEM é o vendedor autorizado, para dar para conferir na tela
+  // (evita conectar a mesma conta duas vezes sem perceber).
+  try {
+    const me = await mlApi('/users/me', conta);
+    tokens[conta].user_id = me.id;
+    tokens[conta].apelido = me.nickname || '';
+    writeJSON(TOKENS_FILE, tokens);
+  } catch { /* segue sem o apelido */ }
   // Em hospedagem, salve este valor na variável indicada para não perder a conexão em reinícios.
   const envVar = (CONTAS_ML[conta] || {}).env || 'ML_REFRESH_TOKEN';
   console.log(`\n===== ${envVar} (guarde nas variáveis de ambiente do host) =====\n` + json.refresh_token + '\n=======================================================================\n');
@@ -671,8 +679,27 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/status') {
       const contas = {};
-      for (const c of Object.keys(CONTAS_ML)) contas[c] = { nome: CONTAS_ML[c].nome, cor: CONTAS_ML[c].cor, conectada: mlConnected(c) };
-      return sendJSON(res, 200, { ml: mlConnected('ml'), contas, clientIdSet: !!ML.clientId, redirectUri: ML.redirectUri });
+      let mudou = false;
+      for (const c of Object.keys(CONTAS_ML)) {
+        const conectada = mlConnected(c);
+        // Descobre o vendedor da conta (uma vez só; depois fica guardado)
+        if (conectada && !tokens[c].apelido) {
+          try {
+            const me = await mlApi('/users/me', c);
+            tokens[c].user_id = me.id; tokens[c].apelido = me.nickname || ''; mudou = true;
+          } catch { /* ignora */ }
+        }
+        contas[c] = {
+          nome: CONTAS_ML[c].nome, cor: CONTAS_ML[c].cor, conectada,
+          apelido: conectada ? (tokens[c].apelido || '') : '',
+          userId: conectada ? (tokens[c].user_id || null) : null,
+        };
+      }
+      if (mudou) writeJSON(TOKENS_FILE, tokens);
+      // Duas contas apontando para o MESMO vendedor = login repetido
+      const ids = Object.keys(contas).filter((c) => contas[c].userId).map((c) => String(contas[c].userId));
+      const duplicada = ids.length > 1 && new Set(ids).size < ids.length;
+      return sendJSON(res, 200, { ml: mlConnected('ml'), contas, duplicada, clientIdSet: !!ML.clientId, redirectUri: ML.redirectUri });
     }
     if (p === '/api/dashboard') {
       const now = new Date();
