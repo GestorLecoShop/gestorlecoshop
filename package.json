@@ -1,0 +1,13 @@
+{
+  "name": "leco-shop-live",
+  "version": "1.0.0",
+  "description": "Dashboard de vendas da Leco Shop com integração ao vivo ao Mercado Livre (e demais marketplaces).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}

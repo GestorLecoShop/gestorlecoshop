@@ -1,0 +1,734 @@
+{
+  "channels": {
+    "ml": {
+      "nome": "Mercado Livre",
+      "cor": "#ffe600",
+      "fat": 148240.18,
+      "liq": 113317.94,
+      "lucroBruto": 30035.28,
+      "ads": 3322.15,
+      "lucro": 26713.13
+    },
+    "amz": {
+      "nome": "Amazon",
+      "cor": "#ff9900",
+      "fat": 10995.04,
+      "liq": 9079.55,
+      "lucroBruto": 4888.64,
+      "ads": 974.85,
+      "lucro": 3913.79
+    },
+    "shp": {
+      "nome": "Shopee",
+      "cor": "#ee4d2d",
+      "fat": 6896.35,
+      "liq": 5086.01,
+      "lucroBruto": 1982.1,
+      "ads": 0,
+      "lucro": 1982.1
+    },
+    "mag": {
+      "nome": "Magalu",
+      "cor": "#0086ff",
+      "fat": 0,
+      "liq": 0,
+      "lucroBruto": 0,
+      "ads": 0,
+      "lucro": 0,
+      "novo": true
+    },
+    "tik": {
+      "nome": "TikTok Shop",
+      "cor": "#69c9d0",
+      "fat": 0,
+      "liq": 0,
+      "lucroBruto": 0,
+      "ads": 0,
+      "lucro": 0,
+      "novo": true
+    },
+    "loja": {
+      "nome": "Loja própria",
+      "cor": "#a78bfa",
+      "fat": 0,
+      "liq": 0,
+      "lucroBruto": 0,
+      "ads": 0,
+      "lucro": 0,
+      "novo": true
+    }
+  },
+  "dreDetail": {
+    "ml": {
+      "fat": 148240.18,
+      "taxas": [
+        [
+          "Frete pago pelo vendedor",
+          -16784.07
+        ],
+        [
+          "Comissão e taxa fixa",
+          -18138.17
+        ]
+      ],
+      "liq": 113317.94,
+      "custos": [
+        [
+          "Custo dos produtos",
+          -74941.28
+        ],
+        [
+          "Custo produtos reembolsados",
+          -743.01
+        ],
+        [
+          "Imposto",
+          -7598.37
+        ]
+      ],
+      "lb": 30035.28
+    },
+    "amz": {
+      "fat": 10995.04,
+      "taxas": [
+        [
+          "Comissão",
+          -1317.68
+        ],
+        [
+          "Frete Amazon",
+          -575.93
+        ],
+        [
+          "Frete pago comprador",
+          183.72
+        ],
+        [
+          "Taxa logística",
+          -12.14
+        ],
+        [
+          "Taxa parcelamento",
+          -63.46
+        ],
+        [
+          "Promoção",
+          -130
+        ]
+      ],
+      "liq": 9079.55,
+      "custos": [
+        [
+          "Custo dos produtos",
+          -3399.48
+        ],
+        [
+          "Imposto",
+          -651.93
+        ],
+        [
+          "Frete logística própria",
+          -101.74
+        ],
+        [
+          "Custos extras",
+          -37.76
+        ]
+      ],
+      "lb": 4888.64
+    },
+    "shp": {
+      "fat": 6896.35,
+      "taxas": [
+        [
+          "Comissão",
+          -1133.16
+        ],
+        [
+          "Taxa de serviço",
+          -669.52
+        ],
+        [
+          "Taxa devolução",
+          -7.84
+        ],
+        [
+          "Moedas",
+          0.18
+        ]
+      ],
+      "liq": 5086.01,
+      "custos": [
+        [
+          "Custo dos produtos",
+          -2680.01
+        ],
+        [
+          "Imposto",
+          -423.9
+        ]
+      ],
+      "lb": 1982.1
+    }
+  },
+  "abc": {
+    "A": {
+      "un": 688,
+      "prod": 25,
+      "fat": 133670.48,
+      "lb": 31412.36,
+      "lbp": 23.5,
+      "lpa": 27874.21,
+      "lpap": 20.85
+    },
+    "B": {
+      "un": 224,
+      "prod": 20,
+      "fat": 24432.2,
+      "lb": 3796.82,
+      "lbp": 15.54,
+      "lpa": 3207.21,
+      "lpap": 13.13
+    },
+    "C": {
+      "un": 114,
+      "prod": 28,
+      "fat": 8028.71,
+      "lb": 2439.85,
+      "lbp": 30.39,
+      "lpa": 2325.8,
+      "lpap": 28.97
+    },
+    "Z": {
+      "un": 0,
+      "prod": 2,
+      "fat": 0,
+      "lb": 0,
+      "lbp": 0,
+      "lpa": -8.85,
+      "lpap": 0
+    }
+  },
+  "produtos": [
+    [
+      "Roteador Starlink Mini Gen 3 Wi-fi 6",
+      "GEN3WF6",
+      30,
+      15658.9,
+      1307.9,
+      1297.9,
+      8.29,
+      "A"
+    ],
+    [
+      "Tripé NT777 c/ Cabeça Hidráulica Nest 180cm",
+      "NT777",
+      16,
+      12067.9,
+      3355.63,
+      3355.63,
+      27.81,
+      "A"
+    ],
+    [
+      "Kit 2 Softbox 50x70 c/ Lâmpadas LED Luz Contínua",
+      "KIT2YB202SB40W",
+      40,
+      11811.26,
+      4843.25,
+      4034.8,
+      34.16,
+      "A"
+    ],
+    [
+      "Kit Softbox Quádruplo 50x70 + Tripé 2m + 4 LED",
+      "KIT1YB203SB20W",
+      51,
+      10990.52,
+      4078.46,
+      3583.68,
+      32.61,
+      "A"
+    ],
+    [
+      "Kit 2 Softbox Quádruplo 50x70 + 2 Tripés 2m",
+      "KIT2YB203",
+      35,
+      10448.79,
+      3691.08,
+      3143.46,
+      30.08,
+      "A"
+    ],
+    [
+      "Tripé Girafa 2em1 Aço Inox Greika 3m CS-330x",
+      "CS330X",
+      10,
+      9273.1,
+      2021.05,
+      2021.05,
+      21.79,
+      "A"
+    ],
+    [
+      "Kit 2 Softbox Quádruplo 50x70 + 2 Tripés + 8 LED",
+      "KIT2YB203SB20W",
+      20,
+      8532.69,
+      3281.79,
+      2707.69,
+      31.73,
+      "A"
+    ],
+    [
+      "Pipoqueira Elétrica Agratto Pop Cine 1200w",
+      "PP02",
+      69,
+      8289.31,
+      993.3,
+      989.36,
+      11.94,
+      "A"
+    ],
+    [
+      "Cooktop Indução Agratto 1 Boca 2000w 220v",
+      "ACKI01I-02",
+      30,
+      5958.58,
+      -203.88,
+      -203.88,
+      -3.42,
+      "A"
+    ],
+    [
+      "Kit Estúdio Softbox 50x70 c/ Lâmpada LED",
+      "KIT1YB202SB40W",
+      28,
+      4532.41,
+      1672.64,
+      1387.28,
+      30.61,
+      "A"
+    ],
+    [
+      "Tripé Profissional Weifeng Greika WT6734 1,80m",
+      "WT6734",
+      10,
+      3834.28,
+      808.61,
+      712.82,
+      18.59,
+      "A"
+    ],
+    [
+      "Lâmpada 250w Secagem Estufa Aviário 127v",
+      "IV12514",
+      123,
+      3499.77,
+      697.69,
+      697.69,
+      19.94,
+      "A"
+    ],
+    [
+      "Kit Youtuber 2 Softbox 50x70 E27 + 2 Tripés 2m",
+      "KIT2YB202",
+      16,
+      3264.64,
+      894.16,
+      874.7,
+      26.79,
+      "A"
+    ],
+    [
+      "Cooktop Elétrico Indução Agratto 1200w 127v",
+      "ACKI01I-01",
+      17,
+      3104.99,
+      -336.5,
+      -336.5,
+      -10.84,
+      "A"
+    ],
+    [
+      "Kit Softbox Soquete E27 Quádruplo 50x70 + Tripé 2m",
+      "KIT1YB203",
+      23,
+      2624.8,
+      408.63,
+      393.21,
+      14.98,
+      "A"
+    ],
+    [
+      "Kit Softbox 4 Lâmpadas LED + Tripé 2m",
+      "LECOYB203LED20Wb",
+      8,
+      2149.92,
+      1051.98,
+      770,
+      35.82,
+      "A"
+    ],
+    [
+      "Cortina de Ar 120cm c/ Controle Remoto",
+      "ACDA120I-02",
+      4,
+      2102.99,
+      122.73,
+      122.73,
+      5.84,
+      "A"
+    ],
+    [
+      "Aspirador Robô Agratto Praticci USB 3w",
+      "13927",
+      13,
+      2038.69,
+      -36.16,
+      -36.16,
+      -1.77,
+      "A"
+    ],
+    [
+      "Tripé Weifeng WT3770 1,64m Foto e Vídeo",
+      "WT3770",
+      12,
+      2032.05,
+      275.87,
+      275.87,
+      13.58,
+      "A"
+    ],
+    [
+      "Lâmpada Aquecimento Empalux 250w 220v",
+      "IV12254",
+      81,
+      1991.19,
+      184.79,
+      184.79,
+      9.28,
+      "A"
+    ],
+    [
+      "Kit Luz Contínua Softbox 50x70 + Tripé 2m (FBA)",
+      "KIT1YB202_FBA",
+      16,
+      1955.44,
+      825.58,
+      663.97,
+      33.96,
+      "A"
+    ],
+    [
+      "Kit 3 Softbox 50x70 + Tripé Girafa 2m",
+      "KITGIRAFA3YB202",
+      4,
+      1951.96,
+      155.46,
+      -22.08,
+      -1.13,
+      "A"
+    ],
+    [
+      "Kit 2 Softbox 8 LED + 2 Tripés 2m",
+      "LECO2YB203SB20W",
+      4,
+      1909.96,
+      867.62,
+      805.52,
+      42.17,
+      "A"
+    ],
+    [
+      "Kit Luz Contínua Softbox 50x70 + Tripé 2m",
+      "KIT1YB202",
+      19,
+      1841.43,
+      399.01,
+      399.01,
+      21.67,
+      "A"
+    ],
+    [
+      "Porteiro Residencial IPR 8010 Intelbras",
+      "IPR1010",
+      9,
+      1804.91,
+      51.67,
+      51.67,
+      2.86,
+      "A"
+    ],
+    [
+      "Nobreak Intelbras Attiv 600va-bi",
+      "ATTIV600VA-BI",
+      4,
+      1799.96,
+      -135.28,
+      -182.23,
+      -10.12,
+      "B"
+    ],
+    [
+      "Omeleteira Elétrica Agratto Mr Cheff 800w Inox",
+      "AOIP01I-01",
+      19,
+      1763.57,
+      106.34,
+      106.34,
+      6.03,
+      "B"
+    ],
+    [
+      "Panela Elétrica Agratto Mangiare Grill 30cm",
+      "APEQ01I-01",
+      12,
+      1679.89,
+      -44.51,
+      -44.51,
+      -2.65,
+      "B"
+    ],
+    [
+      "Monopé Weifeng WT1005 Alumínio 1,80m",
+      "WT1005",
+      13,
+      1523.87,
+      385.77,
+      333.65,
+      21.89,
+      "B"
+    ],
+    [
+      "Panela Multifuncional Grill 30cm Agratto 220v",
+      "APEQ01I-02",
+      9,
+      1349.91,
+      55.26,
+      55.26,
+      4.09,
+      "B"
+    ],
+    [
+      "Tripé Weifeng WT5316 Profissional",
+      "WT5316",
+      3,
+      1331.04,
+      387.31,
+      387.31,
+      29.1,
+      "B"
+    ],
+    [
+      "Rádio Comunicador 16 Canais RC3002 Intelbras",
+      "RC3002",
+      9,
+      1320,
+      -142.11,
+      -142.11,
+      -10.77,
+      "B"
+    ],
+    [
+      "Kit Softbox 50x70 c/ Lâmpada LED (HF)",
+      "HF-EF27-US4K",
+      7,
+      1309.93,
+      681.03,
+      494.35,
+      37.74,
+      "B"
+    ],
+    [
+      "Kit 2 Softbox 50x70 Lâmpada 85w Tricolor",
+      "KIT2YB202LED85W",
+      3,
+      1188.72,
+      413.52,
+      413.52,
+      34.79,
+      "B"
+    ],
+    [
+      "Tripé Amador Greika WT3730 + Suporte Celular",
+      "WT3730",
+      7,
+      1184.94,
+      347.82,
+      208.24,
+      17.57,
+      "B"
+    ],
+    [
+      "Kit Youtuber 2 Softbox 50x70 + 2 Tripés (FBA)",
+      "KIT2YB202_FBA",
+      5,
+      1169.95,
+      485.35,
+      345.43,
+      29.53,
+      "B"
+    ],
+    [
+      "Panela de Arroz Agratto Riso 6 Xícaras 220v",
+      "PA6X-02",
+      9,
+      1169.1,
+      -28.29,
+      -28.29,
+      -2.42,
+      "B"
+    ],
+    [
+      "Suporte Monopé Greika WT1003",
+      "WI1003",
+      11,
+      1149.39,
+      371.14,
+      371.14,
+      32.29,
+      "B"
+    ],
+    [
+      "Omeleteira Antiaderente Agratto Inox 800w 220v",
+      "AOIP01I-02",
+      12,
+      1131.84,
+      39.06,
+      39.06,
+      3.45,
+      "B"
+    ],
+    [
+      "Empalux Secagem Incandescente 250w E27 220v",
+      "IV22514",
+      48,
+      1109.92,
+      70.43,
+      70.43,
+      6.35,
+      "B"
+    ],
+    [
+      "Sombrinha Rebatedora 84cm Preta e Prata",
+      "YU302",
+      26,
+      886.18,
+      236.23,
+      211.87,
+      23.91,
+      "B"
+    ],
+    [
+      "Lâmpada LED 85w Estúdio Tricolor c/ Controle",
+      "LED85WTRI",
+      13,
+      874.87,
+      211.86,
+      211.86,
+      24.22,
+      "B"
+    ],
+    [
+      "Kit Duplo Newborn Estúdio Luz Contínua E27",
+      "KIT2YU304",
+      3,
+      760.68,
+      186.6,
+      186.6,
+      24.53,
+      "C"
+    ],
+    [
+      "Tecido Difusor para Softbox 50x70",
+      "Y202TEC",
+      23,
+      597.81,
+      219.38,
+      219.38,
+      36.7,
+      "C"
+    ],
+    [
+      "Kit 2 Softbox Quádruplo 50x70 + 8 Lâmpadas + Bolsa",
+      "KIT2YB203SB20WBAG",
+      1,
+      512.99,
+      225.03,
+      222.82,
+      43.44,
+      "C"
+    ],
+    [
+      "Sombrinha Refletora Preta e Branca 84cm",
+      "YU303",
+      8,
+      473.82,
+      158.62,
+      158.62,
+      33.48,
+      "C"
+    ],
+    [
+      "Bolsa de Transporte Kits Iluminação",
+      "YA5407",
+      7,
+      469.43,
+      149.62,
+      149.62,
+      31.87,
+      "C"
+    ],
+    [
+      "Softbox Lanterna Japonesa Branca Leco Shop",
+      "LT1001",
+      1,
+      281.29,
+      150.75,
+      150.75,
+      53.59,
+      "C"
+    ],
+    [
+      "Kit Estúdio Sombrinha + Tripé + Suporte Flash",
+      "KIT1YA423YU302",
+      2,
+      271.48,
+      75.89,
+      60.23,
+      22.19,
+      "C"
+    ],
+    [
+      "Kit 2 Softbox 50x70 Estúdio + Bolsa",
+      "KIT2YB202SB20WBAG",
+      1,
+      303.99,
+      100.86,
+      100.86,
+      33.18,
+      "C"
+    ],
+    [
+      "Kit 2 Soft Box Quádruplo 50x70 + Bolsa",
+      "KIT2YB203BAG",
+      0,
+      0,
+      0,
+      -5.58,
+      -558,
+      "Z"
+    ],
+    [
+      "Suporte para Sombrinha e Flash Dedicado",
+      "YA423",
+      0,
+      0,
+      0,
+      -3.27,
+      -327,
+      "Z"
+    ]
+  ]
+}

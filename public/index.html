@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leco Shop · Gestão de Vendas (ao vivo)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0f1720;--surface:#161f2b;--surface2:#1d2836;--line:#26323f;--txt:#e8eef5;--muted:#8a99ab;--brand:#22c55e;--brand-d:#16a34a;--blue:#38bdf8;--violet:#a78bfa;--amber:#fbbf24;--rose:#fb7185;--cyan:#2dd4bf;--radius:16px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
+.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+.side{background:linear-gradient(180deg,#131c27,#0f1720);border-right:1px solid var(--line);padding:22px 16px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:11px;padding:4px 8px 20px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--brand),var(--brand-d));display:grid;place-items:center;font-weight:800;color:#04140a;font-size:19px}
+.brand b{font-size:17px}.brand span{display:block;font-size:11px;color:var(--muted)}
+.nav{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.nav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;color:var(--muted);font-weight:500;cursor:pointer}
+.nav a svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2}
+.nav a:hover{background:var(--surface);color:var(--txt)}
+.nav a.on{background:linear-gradient(135deg,rgba(34,197,94,.16),rgba(34,197,94,.05));color:var(--brand)}
+.conn{margin-top:auto;padding:12px;border-radius:12px;background:var(--surface);border:1px solid var(--line);font-size:12px}
+.conn .row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.conn .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.on-c{background:var(--brand)}.off-c{background:#59677a}.err-c{background:var(--rose)}
+.main{padding:24px 32px 60px;max-width:1500px;width:100%}
+.banner{border-radius:14px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:13px}
+.banner.demo{background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.4)}
+.banner.live{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.4)}
+.banner.err{background:rgba(251,113,133,.10);border:1px solid rgba(251,113,133,.4)}
+.btn{background:linear-gradient(135deg,var(--brand),var(--brand-d));color:#04140a;border:none;padding:9px 16px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:8px}
+.btn.ghost{background:var(--surface2);color:var(--txt);border:1px solid var(--line)}
+.top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:22px}
+.top h1{font-size:24px}.top .sub{color:var(--muted);font-size:13px;margin-top:2px}
+.filters{display:flex;gap:10px;flex-wrap:wrap}
+.sel{background:var(--surface);border:1px solid var(--line);color:var(--txt);border-radius:11px;padding:9px 14px;font-size:13px;font-weight:500;cursor:pointer;outline:none}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;position:relative;overflow:hidden}
+.kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--brand)}
+.kpi.blue::before{background:var(--blue)}.kpi.violet::before{background:var(--violet)}.kpi.amber::before{background:var(--amber)}.kpi.cyan::before{background:var(--cyan)}
+.kpi .lbl{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.kpi .val{font-size:24px;font-weight:750;margin:8px 0 4px}
+.kpi .chg{font-size:12px;font-weight:600}.up{color:var(--brand)}.down{color:var(--rose)}
+.grid{display:grid;gap:16px;margin-bottom:16px}.g-2-1{grid-template-columns:2fr 1fr}.g-1-1{grid-template-columns:1fr 1fr}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+.card h3{font-size:15px;font-weight:650;display:flex;align-items:center;gap:8px}
+.card .hint{color:var(--muted);font-size:12px;margin-bottom:14px}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px}
+.tabs{display:flex;gap:4px;background:var(--surface2);border-radius:10px;padding:3px}
+.tabs button{background:none;border:none;color:var(--muted);padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+.tabs button.on{background:var(--brand);color:#04140a}
+.chart-box{position:relative;height:300px}.chart-sm{position:relative;height:250px}
+.dre{display:flex;flex-direction:column;gap:2px}
+.dre-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 14px;border-radius:10px}
+.dre-row:hover{background:var(--surface2)}
+.dre-row .rl{display:flex;align-items:center;gap:10px;font-weight:500}
+.dre-row .dot{width:9px;height:9px;border-radius:3px;flex:none}
+.dre-row .rv{font-weight:700;font-variant-numeric:tabular-nums}
+.dre-row.total{background:var(--surface2);border:1px solid var(--line);margin-top:6px}
+.dre-row.total .rl{font-weight:750;font-size:15px}.dre-row.total .rv{font-size:16px}
+.dre-row.sub{padding:7px 14px 7px 34px;font-size:13px;color:var(--muted)}.dre-row.sub .rv{font-weight:600;font-size:13px}
+.neg{color:var(--rose)}.pos{color:var(--brand)}.pct{color:var(--muted);font-size:12px;font-weight:600;margin-left:8px}
+.abc{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.abc-card{background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:15px;border-top:3px solid var(--brand)}
+.abc-card.b{border-top-color:var(--blue)}.abc-card.c{border-top-color:var(--amber)}.abc-card.z{border-top-color:var(--rose)}
+.abc-card .t{font-size:20px;font-weight:800;margin-bottom:8px}
+.abc-card .l{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--muted)}.abc-card .l b{color:var(--txt)}
+.tbl-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{background:var(--surface2)}
+.sku{color:var(--muted);font-size:11px}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+.badge.A{background:rgba(34,197,94,.18);color:var(--brand)}.badge.B{background:rgba(56,189,248,.18);color:var(--blue)}.badge.C{background:rgba(251,191,36,.18);color:var(--amber)}.badge.Z{background:rgba(251,113,133,.18);color:var(--rose)}
+.search{background:var(--surface2);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:8px 12px;font-size:13px;outline:none;width:230px}
+.legend{display:flex;flex-direction:column;gap:9px;margin-top:6px}
+.legend .li{display:flex;align-items:center;justify-content:space-between;font-size:13px}
+.legend .li .n{display:flex;align-items:center;gap:9px}.legend .sw{width:11px;height:11px;border-radius:3px}
+.muted{color:var(--muted)}.pill{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--surface2);color:var(--muted);font-weight:600;border:1px solid var(--line)}
+.section-title{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin:26px 2px 4px}
+.loading{text-align:center;color:var(--muted);padding:60px}
+.modal{position:fixed;inset:0;background:rgba(6,10,16,.72);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
+.modal.open{display:flex}
+.modal .box{background:var(--surface);border:1px solid var(--line);border-radius:18px;width:100%;max-width:760px;padding:24px}
+.modal h2{font-size:19px;margin-bottom:4px}
+.modal .mhint{color:var(--muted);font-size:13px;margin-bottom:18px}
+.mtabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.mtabs button{background:none;border:none;color:var(--muted);padding:10px 14px;font-weight:600;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
+.mtabs button.on{color:var(--brand);border-bottom-color:var(--brand)}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
+.field input{width:100%;background:var(--surface2);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 12px;font-size:13px;outline:none}
+.field input:focus{border-color:var(--brand)}
+.field .tip{font-size:11px;color:var(--muted);margin-top:5px}
+.copy{display:inline-flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;font-family:monospace;color:var(--txt);cursor:pointer}
+.mrow{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.costs-tbl{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.costs-tbl table{font-size:12px}.costs-tbl th{position:sticky;top:0;background:var(--surface)}
+.costs-tbl input{width:90px;background:var(--surface2);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;outline:none}
+.ok-msg{color:var(--brand);font-size:12px;font-weight:600}
+.close-x{float:right;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}.g-2-1,.g-1-1{grid-template-columns:1fr}.app{grid-template-columns:1fr}.side{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="logo">L</div><div><b>Leco Shop</b><span>Gestão de Vendas</span></div></div>
+    <nav class="nav">
+      <a class="on"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Dashboard</a>
+      <a><svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Vendas</a>
+      <a><svg viewBox="0 0 24 24"><path d="M3 3v18h18M8 17V9M13 17V5M18 17v-6"/></svg>Curva ABC</a>
+      <a><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Analítico</a>
+      <a><svg viewBox="0 0 24 24"><path d="M4 22V4a2 2 0 012-2h9l5 5v15a2 2 0 01-2 2zM14 2v6h6"/></svg>Financeiro / DRE</a>
+      <a id="navConfig"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 00-1.7-1L14.5 2h-4l-.3 2.6a7 7 0 00-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 000 2l-2 1.6 2 3.4 2.4-1a7 7 0 001.7 1l.3 2.6h4l.3-2.6a7 7 0 001.7-1l2.4 1 2-3.4-2-1.6a7 7 0 00.1-1z"/></svg>Configurações</a>
+    </nav>
+    <div class="conn" id="connBox"><div class="row"><span class="dot off-c"></span>Verificando conexões…</div></div>
+  </aside>
+
+  <main class="main">
+    <div id="banner"></div>
+    <div class="top">
+      <div><h1>Visão Geral</h1><div class="sub" id="periodLabel">Carregando…</div></div>
+      <div class="filters">
+        <select class="sel" id="fPeriod">
+          <option value="mes">Este mês</option>
+          <option value="ant">Mês passado</option>
+          <option value="30">Últimos 30 dias</option>
+        </select>
+        <select class="sel" id="fChannel">
+          <option value="all">Todos os canais</option>
+          <option value="ml">Mercado Livre</option>
+          <option value="amz">Amazon</option>
+          <option value="shp">Shopee</option>
+          <option value="mag">Magalu</option>
+          <option value="tik">TikTok Shop</option>
+          <option value="loja">Loja própria</option>
+        </select>
+      </div>
+    </div>
+    <div id="content"><div class="loading">Carregando dados…</div></div>
+  </main>
+</div>
+
+<div class="modal" id="cfgModal">
+  <div class="box">
+    <button class="close-x" onclick="closeCfg()">&times;</button>
+    <h2>Configurações</h2>
+    <div class="mhint">Tudo pela tela — você não precisa editar nenhum arquivo.</div>
+    <div class="mtabs">
+      <button class="on" data-t="conexao" onclick="cfgTab('conexao')">Conexão Mercado Livre</button>
+      <button data-t="custos" onclick="cfgTab('custos')">Custos por produto</button>
+    </div>
+
+    <div id="tab-conexao">
+      <div class="field">
+        <label>App ID / Client ID</label>
+        <input id="cfgClientId" placeholder="ex.: 1234567890123456">
+      </div>
+      <div class="field">
+        <label>Client Secret</label>
+        <input id="cfgSecret" type="password" placeholder="cole a chave secreta do seu app">
+        <div class="tip">Fica salvo só no seu computador. Nunca é enviado para fora.</div>
+      </div>
+      <div class="field">
+        <label>Redirect URI — cadastre esta EXATA no seu app do ML</label>
+        <div class="copy" id="cfgRedirect" onclick="copyRedirect()" title="clique para copiar">—</div>
+        <div class="tip">Em developers.mercadolivre.com.br → seu app → Editar → URIs de redirect.</div>
+      </div>
+      <div class="mrow">
+        <span class="ok-msg" id="cfgMsg"></span>
+        <button class="btn ghost" onclick="closeCfg()">Fechar</button>
+        <button class="btn" onclick="saveConfig()">Salvar e conectar</button>
+      </div>
+    </div>
+
+    <div id="tab-custos" style="display:none">
+      <div class="mhint">O ML não informa custo nem imposto. Preencha aqui (por SKU) para o Lucro fechar. Aparecem os produtos que já vieram das suas vendas.</div>
+      <div class="field" style="max-width:220px">
+        <label>Imposto padrão (%) — usado quando o SKU não tem valor próprio</label>
+        <input id="cfgTaxaPadrao" type="number" step="0.1" placeholder="9">
+      </div>
+      <div class="costs-tbl">
+        <table><thead><tr><th>Produto</th><th>SKU</th><th style="text-align:right">Custo unit. (R$)</th><th style="text-align:right">Imposto (%)</th></tr></thead>
+        <tbody id="costsBody"></tbody></table>
+      </div>
+      <div class="mrow">
+        <span class="ok-msg" id="costMsg"></span>
+        <button class="btn ghost" onclick="closeCfg()">Fechar</button>
+        <button class="btn" onclick="saveCosts()">Salvar custos</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<template id="tpl">
+  <div class="kpis" id="kpis"></div>
+  <div class="grid g-2-1">
+    <div class="card">
+      <div class="card-head"><div><h3>Receita &amp; Lucro</h3><div class="hint" id="trendHint">Distribuição no período</div></div>
+        <div class="tabs" id="trendTabs"><button class="on" data-m="fat">Faturamento</button><button data-m="liq">Líquido</button><button data-m="lucro">Lucro</button></div></div>
+      <div class="chart-box"><canvas id="trendChart"></canvas></div>
+    </div>
+    <div class="card"><h3>Vendas por canal</h3><div class="hint">Participação no faturamento</div>
+      <div class="chart-sm"><canvas id="donutChart"></canvas></div><div class="legend" id="channelLegend"></div></div>
+  </div>
+  <div class="grid g-2-1">
+    <div class="card"><div class="card-head"><div><h3>DRE · Demonstrativo de Resultado</h3><div class="hint">Cascata do faturamento ao lucro líquido</div></div><span class="pill" id="drePill"></span></div><div class="dre" id="dre"></div></div>
+    <div class="card"><h3>Curva ABC</h3><div class="hint">Classificação por representatividade</div><div class="abc" id="abc"></div><div style="margin-top:16px" class="chart-sm"><canvas id="abcChart"></canvas></div></div>
+  </div>
+  <div class="grid g-1-1">
+    <div class="card"><h3>Comparativo de canais</h3><div class="hint">Faturamento, líquido e lucro por marketplace</div><div class="chart-sm"><canvas id="channelBar"></canvas></div></div>
+    <div class="card"><h3>Margem líquida por canal</h3><div class="hint">Lucro líquido ÷ faturamento</div><div class="chart-sm"><canvas id="marginBar"></canvas></div></div>
+  </div>
+  <div class="section-title">Produtos</div>
+  <div class="card">
+    <div class="card-head"><div><h3 id="prodCount"></h3><div class="hint">Ordene clicando nos títulos · busque por nome ou SKU</div></div><input class="search" id="prodSearch" placeholder="Buscar produto ou SKU…"></div>
+    <div class="tbl-wrap"><table id="prodTable"><thead><tr>
+      <th data-k="0">Produto</th><th class="num" data-k="2">Un.</th><th class="num" data-k="3">Faturamento</th>
+      <th class="num" data-k="4">Lucro</th><th class="num" data-k="5">Lucro pós Ads</th><th class="num" data-k="6">MPA</th>
+      <th data-k="7" style="text-align:center">Curva</th></tr></thead><tbody id="prodBody"></tbody></table></div>
+  </div>
+</template>
+
+<script>
+const BRL=v=>'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const PCT=v=>(v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+const ORDER=['ml','amz','shp','mag','tik','loja'];
+let DATA=null, CH={}, DRE={}, ABC={}, PRODUTOS=[];
+let state={channel:'all',period:'mes',trendMetric:'fat'};
+let charts={};
+
+function periodRange(key){
+  const now=new Date(); const y=now.getFullYear(), m=now.getMonth();
+  let from,to;
+  if(key==='mes'){from=new Date(y,m,1);to=now;}
+  else if(key==='ant'){from=new Date(y,m-1,1);to=new Date(y,m,0,23,59,59);}
+  else {to=now;from=new Date(now.getTime()-30*864e5);}
+  const iso=d=>d.toISOString().slice(0,19)+'.000-03:00';
+  const lbl=d=>d.toLocaleDateString('pt-BR');
+  return {from:iso(from),to:iso(to),label:lbl(from)+' a '+lbl(to)};
+}
+
+async function loadStatus(){
+  try{const r=await fetch('/api/status');return await r.json();}catch{return{ml:false,clientIdSet:false};}
+}
+async function loadDashboard(){
+  const pr=periodRange(state.period);
+  document.getElementById('periodLabel').textContent=pr.label;
+  document.getElementById('content').innerHTML='<div class="loading">Buscando dados…</div>';
+  const r=await fetch(`/api/dashboard?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}`);
+  DATA=await r.json();
+  CH=DATA.channels||{}; DRE=DATA.dreDetail||{}; ABC=DATA.abc||{}; PRODUTOS=(DATA.produtos||[]).map(p=>p.slice());
+  renderBanner(); renderConn(); mount();
+}
+
+function renderConn(){
+  const s=DATA.status||{};
+  const item=(k,label)=>{const st=s[k]; const cls=st==='connected'?'on-c':st==='error'?'err-c':'off-c';
+    const txt=st==='connected'?'conectado':st==='error'?'erro':st==='soon'?'em breve':'desconectado';
+    return `<div class="row"><span class="dot ${cls}"></span>${label}: <b style="margin-left:auto">${txt}</b></div>`;};
+  document.getElementById('connBox').innerHTML=item('ml','Mercado Livre')+item('amz','Amazon')+item('shp','Shopee')+item('mag','Magalu')+item('tik','TikTok');
+}
+function renderBanner(){
+  const b=document.getElementById('banner'); const s=DATA.status||{};
+  if(s.ml==='connected'){
+    const ped=(CH.ml&&CH.ml.pedidos)||0;
+    b.className='banner live'; b.innerHTML=`<div>✅ <b>Mercado Livre conectado</b> — ${ped} pedidos no período, dados ao vivo.</div>
+      <button class="btn ghost" onclick="connectML()">Reconectar</button>`;
+  } else if(s.ml==='error'){
+    b.className='banner err'; b.innerHTML=`<div>⚠ <b>Erro ao ler o Mercado Livre:</b> ${s.mlError||''}. Reconecte.</div><button class="btn" onclick="connectML()">Conectar Mercado Livre</button>`;
+  } else {
+    b.className='banner demo'; b.innerHTML=`<div>🟡 <b>Modo demonstração</b> — mostrando dados de exemplo. Conecte sua conta para ver as vendas reais.</div><button class="btn" onclick="connectML()">Conectar Mercado Livre</button>`;
+  }
+}
+
+function activeChannelKeys(){ return state.channel==='all'?ORDER:[state.channel]; }
+function agg(keys){let t={fat:0,liq:0,lb:0,ads:0,lucro:0};keys.forEach(k=>{const c=CH[k];if(!c)return;t.fat+=c.fat||0;t.liq+=c.liq||0;t.lb+=c.lucroBruto||0;t.ads+=c.ads||0;t.lucro+=c.lucro||0;});return t;}
+
+function mount(){
+  const c=document.getElementById('content');
+  c.innerHTML=''; c.appendChild(document.getElementById('tpl').content.cloneNode(true));
+  bindEvents(); renderAll();
+}
+function renderAll(){renderKPIs();renderTrend();renderDonut();renderDRE();renderABC();renderChannelBars();renderTable();}
+
+function renderKPIs(){
+  const t=agg(activeChannelKeys());
+  const margem=t.fat?t.lucro/t.fat*100:0;
+  const cards=[
+    {c:'',lbl:'Faturamento',val:BRL(t.fat),chg:(DATA.demo?'exemplo':'ao vivo'),up:true},
+    {c:'blue',lbl:'Líquido Marketplace',val:BRL(t.liq),chg:PCT(t.fat?t.liq/t.fat*100:0)+' do fat.',up:true},
+    {c:'violet',lbl:'Lucro Bruto',val:BRL(t.lb),chg:PCT(t.fat?t.lb/t.fat*100:0)+' margem',up:true},
+    {c:'cyan',lbl:'Lucro Líquido',val:BRL(t.lucro),chg:'após Ads e taxas',up:t.lucro>=0},
+    {c:'amber',lbl:'Margem Líquida',val:PCT(margem),chg:margem>=18?'saudável':'atenção',up:margem>=18},
+  ];
+  document.getElementById('kpis').innerHTML=cards.map(k=>`<div class="kpi ${k.c}"><div class="lbl">${k.lbl}</div><div class="val">${k.val}</div><div class="chg ${k.up?'up':'down'}">${k.up?'▲':'▼'} ${k.chg}</div></div>`).join('');
+}
+
+function dailySeries(total,n){const shape=[0.9,1.05,1.15,0.7,0.6,0.95,1.35,1.2,1.0,1.1,0.85,0.75,0.8,0.95];const s=shape.slice(0,n);const sum=s.reduce((a,b)=>a+b,0)||1;return s.map(x=>+(total*x/sum).toFixed(2));}
+function baseOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+BRL(c.parsed.y??c.parsed)}}},scales:{x:{grid:{display:false},ticks:{color:'#8a99ab',font:{size:11}}},y:{grid:{color:'rgba(38,50,63,.5)'},ticks:{color:'#8a99ab',font:{size:11},callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}};}
+function renderTrend(){
+  const t=agg(activeChannelKeys());const m=state.trendMetric;
+  const base=m==='fat'?t.fat:m==='liq'?t.liq:t.lucro;
+  const days=Array.from({length:14},(_,i)=>String(i+1).padStart(2,'0'));
+  const data=dailySeries(base,14);
+  const color=m==='lucro'?'#22c55e':m==='liq'?'#38bdf8':'#a78bfa';
+  if(charts.trend)charts.trend.destroy();
+  const ctx=document.getElementById('trendChart');
+  const g=ctx.getContext('2d').createLinearGradient(0,0,0,300);g.addColorStop(0,color+'55');g.addColorStop(1,color+'05');
+  charts.trend=new Chart(ctx,{type:'line',data:{labels:days,datasets:[{data,borderColor:color,backgroundColor:g,fill:true,tension:.4,borderWidth:2.5,pointRadius:0,pointHoverRadius:5}]},options:baseOpts()});
+}
+function renderDonut(){
+  const chs=ORDER.filter(k=>CH[k]&&CH[k].fat>0);
+  const labels=chs.map(k=>CH[k].nome),colors=chs.map(k=>CH[k].cor),vals=chs.map(k=>CH[k].fat);
+  const total=vals.reduce((a,b)=>a+b,0)||1;
+  if(charts.donut)charts.donut.destroy();
+  charts.donut=new Chart(document.getElementById('donutChart'),{type:'doughnut',data:{labels,datasets:[{data:vals,backgroundColor:colors,borderColor:'#161f2b',borderWidth:3,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'66%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.label+': '+BRL(c.parsed)+' ('+PCT(c.parsed/total*100)+')'}}}}});
+  document.getElementById('channelLegend').innerHTML=chs.map((k,i)=>`<div class="li"><span class="n"><span class="sw" style="background:${colors[i]}"></span>${CH[k].nome}</span><b>${PCT(vals[i]/total*100)}</b></div>`).join('')
+    +ORDER.filter(k=>CH[k]&&CH[k].novo).map(k=>`<div class="li"><span class="n"><span class="sw" style="background:${CH[k].cor}"></span>${CH[k].nome} <span class="pill">integrar</span></span><b class="muted">—</b></div>`).join('');
+}
+function renderDRE(){
+  const keys=state.channel==='all'?Object.keys(DRE):(DRE[state.channel]?[state.channel]:Object.keys(DRE));
+  let fat=0,liq=0,lb=0,ads=0,lucro=0;const taxas={},custos={};
+  keys.forEach(k=>{const d=DRE[k];if(!d)return;fat+=d.fat;liq+=d.liq;lb+=d.lb;d.taxas.forEach(([n,v])=>taxas[n]=(taxas[n]||0)+v);d.custos.forEach(([n,v])=>custos[n]=(custos[n]||0)+v);});
+  const chAds=state.channel==='all'?ORDER:[state.channel];chAds.forEach(k=>{if(CH[k]){ads+=CH[k].ads||0;lucro+=CH[k].lucro||0;}});
+  const rows=[];
+  rows.push(['total','Faturamento',fat,'pos',null]);
+  Object.entries(taxas).sort((a,b)=>a[1]-b[1]).forEach(([n,v])=>rows.push(['sub',n,v,v<0?'neg':'pos']));
+  rows.push(['total','Líquido Marketplace',liq,'pos',fat?liq/fat*100:0]);
+  Object.entries(custos).sort((a,b)=>a[1]-b[1]).forEach(([n,v])=>rows.push(['sub',n,v,v<0?'neg':'pos']));
+  rows.push(['total','Lucro Bruto',lb,'pos',fat?lb/fat*100:0]);
+  if(ads)rows.push(['sub','Investimento em Ads',-ads,'neg']);
+  rows.push(['total','Lucro Líquido Operacional',lucro,lucro>=0?'pos':'neg',fat?lucro/fat*100:0]);
+  const dot={'Faturamento':'#a78bfa','Líquido Marketplace':'#38bdf8','Lucro Bruto':'#22c55e','Lucro Líquido Operacional':'#2dd4bf'};
+  document.getElementById('dre').innerHTML=rows.map(r=>{
+    const [type,label,val,cls,pct]=r;
+    if(type==='sub')return `<div class="dre-row sub"><div class="rl">${label}</div><div class="rv ${cls}">${val<0?'– ':'+ '}${BRL(Math.abs(val))}</div></div>`;
+    return `<div class="dre-row total"><div class="rl"><span class="dot" style="background:${dot[label]||'#22c55e'}"></span>${label}${pct!=null?`<span class="pct">${PCT(pct)}</span>`:''}</div><div class="rv ${cls}">${BRL(val)}</div></div>`;
+  }).join('');
+  document.getElementById('drePill').textContent=DATA.demo?'exemplo':'ao vivo';
+}
+function renderABC(){
+  const cls={A:'',B:'b',C:'c',Z:'z'};
+  document.getElementById('abc').innerHTML=['A','B','C','Z'].map(k=>{const d=ABC[k]||{un:0,prod:0,fat:0,lpap:0,lpa:0};
+    return `<div class="abc-card ${cls[k]}"><div class="t">Curva ${k}</div>
+      <div class="l"><span>Unidades</span><b>${d.un}</b></div><div class="l"><span>Produtos</span><b>${d.prod}</b></div>
+      <div class="l"><span>Faturamento</span><b>${BRL(d.fat).replace(',00','')}</b></div>
+      <div class="l"><span>Lucro pós Ads</span><b class="${(d.lpa||0)<0?'neg':''}">${PCT(d.lpap)}</b></div></div>`;}).join('');
+  if(charts.abc)charts.abc.destroy();
+  charts.abc=new Chart(document.getElementById('abcChart'),{type:'bar',data:{labels:['A','B','C','Z'],datasets:[{data:['A','B','C','Z'].map(k=>(ABC[k]||{}).fat||0),backgroundColor:['#22c55e','#38bdf8','#fbbf24','#fb7185'],borderRadius:6}]},options:{...baseOpts(),plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+BRL(c.parsed.y)}}}}});
+}
+function renderChannelBars(){
+  const chs=ORDER.filter(k=>CH[k]&&CH[k].fat>0);const labels=chs.map(k=>CH[k].nome);
+  if(charts.cbar)charts.cbar.destroy();
+  charts.cbar=new Chart(document.getElementById('channelBar'),{type:'bar',data:{labels,datasets:[
+    {label:'Faturamento',data:chs.map(k=>CH[k].fat),backgroundColor:'#a78bfa',borderRadius:5},
+    {label:'Líquido',data:chs.map(k=>CH[k].liq),backgroundColor:'#38bdf8',borderRadius:5},
+    {label:'Lucro',data:chs.map(k=>CH[k].lucro),backgroundColor:'#22c55e',borderRadius:5}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#8a99ab',boxWidth:12,font:{size:11}}},tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+BRL(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#8a99ab',font:{size:11}}},y:{grid:{color:'rgba(38,50,63,.5)'},ticks:{color:'#8a99ab',callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+  if(charts.mbar)charts.mbar.destroy();
+  charts.mbar=new Chart(document.getElementById('marginBar'),{type:'bar',data:{labels,datasets:[{data:chs.map(k=>CH[k].fat?+(CH[k].lucro/CH[k].fat*100).toFixed(1):0),backgroundColor:chs.map(k=>CH[k].cor),borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+PCT(c.parsed.x)}}},scales:{x:{grid:{color:'rgba(38,50,63,.5)'},ticks:{color:'#8a99ab',callback:v=>v+'%'}},y:{grid:{display:false},ticks:{color:'#8a99ab',font:{size:11}}}}}});
+}
+let sortK=3,sortDir=-1;
+function renderTable(){
+  const q=(document.getElementById('prodSearch').value||'').toLowerCase();
+  let rows=PRODUTOS.filter(p=>String(p[0]).toLowerCase().includes(q)||String(p[1]).toLowerCase().includes(q));
+  rows.sort((a,b)=>{let x=a[sortK],y=b[sortK];if(typeof x==='string')return sortDir*x.localeCompare(y);return sortDir*(x-y);});
+  document.getElementById('prodCount').textContent=rows.length+' produtos';
+  document.getElementById('prodBody').innerHTML=rows.map(p=>{const[nome,sku,un,fat,lucro,lpa,mpa,curva]=p;
+    return `<tr><td><div>${nome}</div><div class="sku">${sku}</div></td><td class="num">${un}</td><td class="num">${BRL(fat)}</td>
+      <td class="num ${lucro<0?'neg':''}">${BRL(lucro)}</td><td class="num ${lpa<0?'neg':''}">${BRL(lpa)}</td>
+      <td class="num ${mpa<0?'neg':''}" style="font-weight:700">${PCT(mpa)}</td><td style="text-align:center"><span class="badge ${curva||'C'}">${curva||'-'}</span></td></tr>`;}).join('');
+}
+function bindEvents(){
+  document.querySelectorAll('#trendTabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#trendTabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.trendMetric=b.dataset.m;renderTrend();});
+  document.getElementById('prodSearch').oninput=renderTable;
+  document.querySelectorAll('#prodTable th').forEach(th=>th.onclick=()=>{const k=+th.dataset.k;if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=-1;}renderTable();});
+}
+document.getElementById('fChannel').onchange=e=>{state.channel=e.target.value;renderAll();};
+document.getElementById('fPeriod').onchange=e=>{state.period=e.target.value;loadDashboard();};
+
+// ===== Configurações (conexão + custos) =====
+let cfgRedirectUri='';
+const $=id=>document.getElementById(id);
+function cfgTab(t){document.querySelectorAll('.mtabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  $('tab-conexao').style.display=t==='conexao'?'':'none';$('tab-custos').style.display=t==='custos'?'':'none';
+  if(t==='custos')loadCosts();}
+async function openCfg(tab){
+  $('cfgModal').classList.add('open'); cfgTab(tab||'conexao'); $('cfgMsg').textContent='';
+  const c=await(await fetch('/api/config')).json();
+  $('cfgClientId').value=c.clientId||''; $('cfgSecret').value=c.hasSecret?'••••••••':'';
+  cfgRedirectUri=c.redirectUri||''; $('cfgRedirect').textContent=cfgRedirectUri;
+}
+function closeCfg(){$('cfgModal').classList.remove('open');}
+function copyRedirect(){navigator.clipboard&&navigator.clipboard.writeText(cfgRedirectUri);$('cfgRedirect').textContent=cfgRedirectUri+'  ✓ copiado';setTimeout(()=>$('cfgRedirect').textContent=cfgRedirectUri,1500);}
+async function saveConfig(){
+  const clientId=$('cfgClientId').value.trim(); let secret=$('cfgSecret').value.trim();
+  if(secret==='••••••••')secret='';
+  if(!clientId||(!secret&&$('cfgSecret').value!=='••••••••'&&!secret)){}
+  const body={clientId,redirectUri:cfgRedirectUri};
+  if(secret)body.clientSecret=secret;
+  $('cfgMsg').textContent='Salvando…';
+  const r=await(await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  if(r.ok){ $('cfgMsg').textContent='Salvo! Redirecionando para o login do ML…'; setTimeout(()=>location.href='/auth/ml',700); }
+  else $('cfgMsg').textContent='Erro ao salvar.';
+}
+async function connectML(){
+  const c=await(await fetch('/api/config')).json();
+  if(!c.clientId||!c.hasSecret){ openCfg('conexao'); $('cfgMsg').textContent='Preencha o Client ID e o Secret primeiro.'; }
+  else location.href='/auth/ml';
+}
+async function loadCosts(){
+  const c=await(await fetch('/api/costs')).json();
+  $('cfgTaxaPadrao').value=((c.taxaPadrao??0.09)*100).toFixed(1);
+  const itens=c.itens||{};
+  // une SKUs do arquivo de custos + SKUs que apareceram nas vendas
+  const map={};
+  Object.keys(itens).forEach(sku=>map[sku]={sku,nome:sku,custo:itens[sku].custo,imp:itens[sku].imposto});
+  PRODUTOS.forEach(p=>{const sku=p[1];if(!map[sku])map[sku]={sku,nome:p[0],custo:null,imp:null};else map[sku].nome=p[0];});
+  const rows=Object.values(map).sort((a,b)=>a.nome.localeCompare(b.nome));
+  $('costsBody').innerHTML=rows.map(r=>`<tr data-sku="${r.sku}">
+    <td>${r.nome}</td><td class="sku">${r.sku}</td>
+    <td class="num"><input class="c-custo" type="number" step="0.01" value="${r.custo!=null?r.custo:''}"></td>
+    <td class="num"><input class="c-imp" type="number" step="0.1" value="${r.imp!=null?(r.imp*100).toFixed(1):''}"></td></tr>`).join('')
+    ||'<tr><td colspan="4" style="padding:16px;color:var(--muted)">Conecte o Mercado Livre para listar seus produtos aqui.</td></tr>';
+}
+async function saveCosts(){
+  const itens={};
+  document.querySelectorAll('#costsBody tr[data-sku]').forEach(tr=>{
+    const sku=tr.dataset.sku; const custo=tr.querySelector('.c-custo').value; const imp=tr.querySelector('.c-imp').value;
+    if(custo!==''||imp!==''){ itens[sku]={}; if(custo!=='')itens[sku].custo=parseFloat(custo); if(imp!=='')itens[sku].imposto=parseFloat(imp)/100; }
+  });
+  const taxaPadrao=parseFloat($('cfgTaxaPadrao').value||'9')/100;
+  $('costMsg').textContent='Salvando…';
+  await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxaPadrao,itens})});
+  $('costMsg').textContent='Custos salvos! Atualizando painel…';
+  setTimeout(()=>{closeCfg();loadDashboard();},800);
+}
+$('navConfig').onclick=()=>openCfg('conexao');
+$('cfgModal').addEventListener('click',e=>{if(e.target.id==='cfgModal')closeCfg();});
+
+loadDashboard();
+</script>
+</body>
+</html>

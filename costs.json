@@ -1,0 +1,214 @@
+{
+  "taxaPadrao": 0.09,
+  "_nota": "custo = custo unitário do produto em R$. imposto = alíquota (0.09 = 9%). Valores ESTIMADOS — ajuste na tela Configurações > Custos.",
+  "itens": {
+    "13927": {
+      "custo": 123.53,
+      "imposto": 0.09
+    },
+    "GEN3WF6": {
+      "custo": 358.65,
+      "imposto": 0.09
+    },
+    "NT777": {
+      "custo": 371.04,
+      "imposto": 0.09
+    },
+    "KIT2YB202SB40W": {
+      "custo": 126.5,
+      "imposto": 0.09
+    },
+    "KIT1YB203SB20W": {
+      "custo": 95.67,
+      "imposto": 0.09
+    },
+    "KIT2YB203": {
+      "custo": 140.06,
+      "imposto": 0.09
+    },
+    "CS330X": {
+      "custo": 511.92,
+      "imposto": 0.09
+    },
+    "KIT2YB203SB20W": {
+      "custo": 193.12,
+      "imposto": 0.09
+    },
+    "PP02": {
+      "custo": 78.17,
+      "imposto": 0.09
+    },
+    "ACKI01I-02": {
+      "custo": 159.73,
+      "imposto": 0.09
+    },
+    "KIT1YB202SB40W": {
+      "custo": 75.1,
+      "imposto": 0.09
+    },
+    "WT6734": {
+      "custo": 223.96,
+      "imposto": 0.09
+    },
+    "IV12514": {
+      "custo": 16.24,
+      "imposto": 0.09
+    },
+    "KIT2YB202": {
+      "custo": 102.44,
+      "imposto": 0.09
+    },
+    "ACKI01I-01": {
+      "custo": 160.43,
+      "imposto": 0.09
+    },
+    "KIT1YB203": {
+      "custo": 70.78,
+      "imposto": 0.09
+    },
+    "LECOYB203LED20Wb": {
+      "custo": 110.68,
+      "imposto": 0.09
+    },
+    "ACDA120I-02": {
+      "custo": 374.14,
+      "imposto": 0.09
+    },
+    "WT3770": {
+      "custo": 107.4,
+      "imposto": 0.09
+    },
+    "IV12254": {
+      "custo": 16.65,
+      "imposto": 0.09
+    },
+    "KIT1YB202_FBA": {
+      "custo": 52.61,
+      "imposto": 0.09
+    },
+    "KITGIRAFA3YB202": {
+      "custo": 381.27,
+      "imposto": 0.09
+    },
+    "LECO2YB203SB20W": {
+      "custo": 166.29,
+      "imposto": 0.09
+    },
+    "KIT1YB202": {
+      "custo": 53.63,
+      "imposto": 0.09
+    },
+    "IPR1010": {
+      "custo": 148.68,
+      "imposto": 0.09
+    },
+    "ATTIV600VA-BI": {
+      "custo": 392.05,
+      "imposto": 0.09
+    },
+    "AOIP01I-01": {
+      "custo": 65.87,
+      "imposto": 0.09
+    },
+    "APEQ01I-01": {
+      "custo": 111.5,
+      "imposto": 0.09
+    },
+    "WT1005": {
+      "custo": 64.59,
+      "imposto": 0.09
+    },
+    "APEQ01I-02": {
+      "custo": 109.35,
+      "imposto": 0.09
+    },
+    "WT5316": {
+      "custo": 212.53,
+      "imposto": 0.09
+    },
+    "RC3002": {
+      "custo": 128.72,
+      "imposto": 0.09
+    },
+    "HF-EF27-US4K": {
+      "custo": 73.47,
+      "imposto": 0.09
+    },
+    "KIT2YB202LED85W": {
+      "custo": 167.26,
+      "imposto": 0.09
+    },
+    "WT3730": {
+      "custo": 100.59,
+      "imposto": 0.09
+    },
+    "KIT2YB202_FBA": {
+      "custo": 111.09,
+      "imposto": 0.09
+    },
+    "PA6X-02": {
+      "custo": 103.17,
+      "imposto": 0.09
+    },
+    "WI1003": {
+      "custo": 46.72,
+      "imposto": 0.09
+    },
+    "AOIP01I-02": {
+      "custo": 69.37,
+      "imposto": 0.09
+    },
+    "IV22514": {
+      "custo": 16.34,
+      "imposto": 0.09
+    },
+    "YU302": {
+      "custo": 18.1,
+      "imposto": 0.09
+    },
+    "LED85WTRI": {
+      "custo": 35.52,
+      "imposto": 0.09
+    },
+    "KIT2YU304": {
+      "custo": 133.04,
+      "imposto": 0.09
+    },
+    "Y202TEC": {
+      "custo": 10.48,
+      "imposto": 0.09
+    },
+    "KIT2YB203SB20WBAG": {
+      "custo": 172.18,
+      "imposto": 0.09
+    },
+    "YU303": {
+      "custo": 25.78,
+      "imposto": 0.09
+    },
+    "YA5407": {
+      "custo": 30.26,
+      "imposto": 0.09
+    },
+    "LT1001": {
+      "custo": 65.84,
+      "imposto": 0.09
+    },
+    "KIT1YA423YU302": {
+      "custo": 74.4,
+      "imposto": 0.09
+    },
+    "KIT2YB202SB20WBAG": {
+      "custo": 133.21,
+      "imposto": 0.09
+    },
+    "KIT2YB203BAG": {
+      "custo": null,
+      "imposto": 0.09
+    },
+    "YA423": {
+      "custo": null,
+      "imposto": 0.09
+    }
+  }
+}
