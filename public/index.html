@@ -132,6 +132,7 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
     <nav class="nav">
       <a id="navDashboard" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Dashboard</a>
       <a id="navVendas"><svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Vendas</a>
+      <a id="navProdutos"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12l8.73-5.04M12 22.08V12"/></svg>Produtos</a>
       <a><svg viewBox="0 0 24 24"><path d="M3 3v18h18M8 17V9M13 17V5M18 17v-6"/></svg>Curva ABC</a>
       <a><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Analítico</a>
       <a><svg viewBox="0 0 24 24"><path d="M4 22V4a2 2 0 012-2h9l5 5v15a2 2 0 01-2 2zM14 2v6h6"/></svg>Financeiro / DRE</a>
@@ -183,7 +184,7 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
     <div class="mhint">Tudo pela tela — você não precisa editar nenhum arquivo.</div>
     <div class="mtabs">
       <button class="on" data-t="conexao" onclick="cfgTab('conexao')">Conexão Mercado Livre</button>
-      <button data-t="custos" onclick="cfgTab('custos')">Custos por produto</button>
+      <button data-t="custos" onclick="cfgTab('custos')">Custos e Produtos</button>
     </div>
 
     <div id="tab-conexao">
@@ -209,20 +210,69 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
     </div>
 
     <div id="tab-custos" style="display:none">
-      <div class="mhint">O ML não informa custo nem imposto. Preencha aqui (por SKU) para o Lucro fechar. Aparecem os produtos que já vieram das suas vendas.</div>
-      <div class="field" style="max-width:220px">
-        <label>Imposto padrão (%) — usado quando o SKU não tem valor próprio</label>
-        <input id="cfgTaxaPadrao" type="number" step="0.1" placeholder="9">
+      <div class="mhint">O cadastro de produtos e custos agora tem página própria — com <b>histórico de custo por data</b> (o custo de vendas antigas não muda sozinho), cadastro individual e importação por planilha.</div>
+      <div class="mrow" style="justify-content:flex-start">
+        <button class="btn" onclick="closeCfg();goView('produtos')">Abrir gestão de Produtos</button>
       </div>
-      <div class="costs-tbl">
-        <table><thead><tr><th>Produto</th><th>SKU</th><th style="text-align:right">Custo unit. (R$)</th><th style="text-align:right">Imposto (%)</th></tr></thead>
-        <tbody id="costsBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="prodModal">
+  <div class="box" style="max-width:560px">
+    <button class="close-x" onclick="closeProd()">&times;</button>
+    <h2 id="prodModalTitle">Novo Produto</h2>
+    <div class="mhint">Cadastre o produto pelo SKU (o mesmo do anúncio no Mercado Livre) para o lucro fechar certinho.</div>
+    <div class="field"><label>Nome do Produto</label><input id="pmNome" placeholder="Ex.: Kit Iluminação Estúdio 50x"></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:150px"><label>Custo do Produto (R$) *</label><input id="pmCusto" placeholder="Ex.: 22,50"></div>
+      <div class="field" style="flex:1;min-width:150px"><label>Custo Extra (ex.: embalagem)</label><input id="pmExtra" placeholder="Ex.: 0,50"></div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:150px"><label>SKU Interno *</label><input id="pmSku" placeholder="Ex.: KIT50X"></div>
+      <div class="field" style="flex:1;min-width:150px"><label>Imposto (%)</label><input id="pmImposto" type="number" step="0.1" placeholder="9"></div>
+    </div>
+    <div class="field"><label>EAN (código de barras) — opcional</label><input id="pmEan" placeholder="Ex.: 7891234567890"></div>
+    <div id="pmPeriodoWrap" style="display:none">
+      <div class="field">
+        <label>Período de atualização do custo</label>
+        <select class="sel" id="pmModo" onchange="pmPeriodoToggle()" style="width:100%">
+          <option value="novas">Atualizar só nas vendas novas a partir de hoje (padrão)</option>
+          <option value="todas">Atualizar em todas as vendas (antigas e novas)</option>
+          <option value="periodo">Atualizar nas vendas de um período específico</option>
+        </select>
+        <div class="tip">Assim as vendas antigas mantêm o custo da época — só o que você escolher muda.</div>
       </div>
-      <div class="mrow">
-        <span class="ok-msg" id="costMsg"></span>
-        <button class="btn ghost" onclick="closeCfg()">Fechar</button>
-        <button class="btn" onclick="saveCosts()">Salvar custos</button>
+      <div id="pmDatas" style="display:none;gap:12px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:140px"><label>De</label><input type="date" class="sel" id="pmDesde" style="width:100%"></div>
+        <div class="field" style="flex:1;min-width:140px"><label>Até (opcional)</label><input type="date" class="sel" id="pmAte" style="width:100%"></div>
       </div>
+    </div>
+    <div class="mrow">
+      <span class="ok-msg" id="pmMsg"></span>
+      <button class="btn ghost" onclick="closeProd()">Cancelar</button>
+      <button class="btn" onclick="saveProd()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="impModal">
+  <div class="box" style="max-width:560px">
+    <button class="close-x" onclick="closeImport()">&times;</button>
+    <h2>Importar por planilha</h2>
+    <div class="mhint">Baixe o modelo (ou "Baixar meus produtos"), preencha as colunas <b>sku; nome; ean; imposto; custo; custo_extra</b> e suba aqui. Use vírgula no valor (ex.: 22,50) e ponto e vírgula entre as colunas.</div>
+    <div class="field"><label>Arquivo .csv</label><input id="impFile" type="file" accept=".csv,text/csv" style="width:100%"></div>
+    <div class="field">
+      <label>Período de atualização do custo</label>
+      <select class="sel" id="impModo" style="width:100%">
+        <option value="novas">Atualizar só nas vendas novas a partir de hoje (padrão)</option>
+        <option value="todas">Atualizar em todas as vendas (antigas e novas)</option>
+      </select>
+    </div>
+    <div class="mrow">
+      <span class="ok-msg" id="impMsg"></span>
+      <button class="btn ghost" onclick="closeImport()">Cancelar</button>
+      <button class="btn" onclick="doImport()">Importar</button>
     </div>
   </div>
 </div>
@@ -304,12 +354,14 @@ async function loadDashboard(){
 }
 
 // ===== Navegação entre páginas (Dashboard / Vendas) =====
-function refresh(){ if(state.view==='vendas') loadSales(); else loadDashboard(); }
+function refresh(){ if(state.view==='vendas') loadSales(); else if(state.view==='produtos') loadProducts(); else loadDashboard(); }
 function goView(v){
   state.view=v;
   document.getElementById('navDashboard').classList.toggle('on',v==='dashboard');
   document.getElementById('navVendas').classList.toggle('on',v==='vendas');
-  document.querySelector('.top h1').textContent = v==='vendas' ? 'Vendas' : 'Visão Geral';
+  const np=document.getElementById('navProdutos'); if(np) np.classList.toggle('on',v==='produtos');
+  document.querySelector('.top h1').textContent = v==='vendas'?'Vendas':v==='produtos'?'Produtos':'Visão Geral';
+  const f=document.querySelector('.filters'); if(f) f.style.display = v==='produtos'?'none':'flex';
   refresh();
 }
 async function loadSales(){
@@ -390,6 +442,7 @@ function renderSales(demo,error){
           <div class="r tot"><span>Líquido do Marketplace</span><b>${BRL(r.liquido)}</b></div>
           <div class="r"><span class="lbl2">Imposto</span><b class="neg">– ${BRL(r.imposto)}</b></div>
           <div class="r"><span class="lbl2">Custo dos produtos</span><b class="neg">– ${BRL(r.custo)}</b></div>
+          ${r.custoExtra?`<div class="r"><span class="lbl2">Custo extra</span><b class="neg">– ${BRL(r.custoExtra)}</b></div>`:''}
           <div class="r tot"><span>Lucro do pedido</span><b class="${r.lucro<0?'neg':'pos'}">${BRL(r.lucro)}</b></div>
         </div>
       </div>
@@ -556,13 +609,135 @@ document.getElementById('applyCustom').onclick=()=>{
 };
 document.getElementById('navDashboard').onclick=()=>goView('dashboard');
 document.getElementById('navVendas').onclick=()=>goView('vendas');
+document.getElementById('navProdutos').onclick=()=>goView('produtos');
+
+// ===== Produtos (cadastro + custos com histórico por data) =====
+let PRODS=[], TAXA_PADRAO=0.09;
+async function loadProducts(){
+  document.getElementById('content').innerHTML='<div class="loading">Carregando produtos…</div>';
+  try{
+    const j=await(await fetch('/api/products')).json();
+    PRODS=j.itens||[]; TAXA_PADRAO=j.taxaPadrao!=null?j.taxaPadrao:0.09;
+    renderProducts();
+  }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao carregar produtos.</div>'; }
+}
+function prodRows(){
+  const reg=new Map(PRODS.map(p=>[p.sku,p]));
+  // acrescenta SKUs que já apareceram nas vendas mas ainda não têm custo cadastrado
+  (PRODUTOS||[]).forEach(p=>{const sku=p[1]; if(sku&&!reg.has(sku)) reg.set(sku,{sku,nome:p[0],custo:0,custoExtra:0,imposto:TAXA_PADRAO,naoCadastrado:true});});
+  return [...reg.values()];
+}
+function renderProducts(){
+  const c=document.getElementById('content');
+  const taxa=((TAXA_PADRAO||0.09)*100).toFixed(1);
+  c.innerHTML=`
+   <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:16px 20px">
+     <input class="search" id="prodMgSearch" placeholder="Buscar produto ou SKU…">
+     <div style="display:flex;align-items:center;gap:6px"><span class="muted" style="font-size:12px">Imposto padrão</span>
+       <input id="taxaPadraoInp" type="number" step="0.1" value="${taxa}" style="width:66px;background:var(--surface2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:6px 8px;font-size:13px;text-align:right">
+       <span class="muted">%</span><button class="btn ghost" id="taxaPadraoBtn" style="padding:6px 10px">Salvar</button>
+     </div>
+     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+       <button class="btn ghost" onclick="baixar('/api/products/template')">Baixar modelo</button>
+       <button class="btn ghost" onclick="baixar('/api/products/export')">Baixar meus produtos</button>
+       <button class="btn ghost" onclick="openImport()">Importar planilha</button>
+       <button class="btn" onclick="openProd()">+ Novo Produto</button>
+     </div>
+   </div>
+   <div class="card">
+     <div class="tbl-wrap"><table><thead><tr>
+       <th>SKU Interno</th><th>Título</th><th class="num">Preço de Custo</th><th class="num">Custo Extra</th><th class="num">Imposto</th><th></th>
+     </tr></thead><tbody id="prodMgBody"></tbody></table></div>
+   </div>`;
+  const draw=()=>{
+    const q=(document.getElementById('prodMgSearch').value||'').toLowerCase();
+    const rows=prodRows().filter(p=>String(p.sku).toLowerCase().includes(q)||String(p.nome||'').toLowerCase().includes(q));
+    rows.sort((a,b)=>String(a.nome||a.sku).localeCompare(String(b.nome||b.sku)));
+    document.getElementById('prodMgBody').innerHTML = rows.map((p,i)=>{ PRODCACHE[i]=p; return `<tr>
+      <td><b>${p.sku}</b></td>
+      <td>${p.nome||'<span class="muted">—</span>'} ${p.naoCadastrado?'<span class="pill">sem custo</span>':''}</td>
+      <td class="num">${BRL(p.custo)}</td>
+      <td class="num">${BRL(p.custoExtra)}</td>
+      <td class="num">${PCT((p.imposto||0)*100)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn ghost" style="padding:5px 10px" onclick="openProd(PRODCACHE[${i}])">Editar</button>
+        ${p.naoCadastrado?'':`<button class="btn ghost" style="padding:5px 10px" onclick="delProd('${p.sku}')">Excluir</button>`}
+      </td></tr>`;}).join('') || '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">Nenhum produto ainda. Clique em “+ Novo Produto”.</td></tr>';
+  };
+  draw();
+  document.getElementById('prodMgSearch').oninput=draw;
+  document.getElementById('taxaPadraoBtn').onclick=async()=>{
+    const t=parseFloat((document.getElementById('taxaPadraoInp').value||'9').replace(',','.'))/100;
+    await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxaPadrao:t})});
+    TAXA_PADRAO=t; loadProducts();
+  };
+}
+let PRODCACHE={};
+function baixar(url){ window.open(url,'_blank'); }
+async function delProd(sku){
+  if(!confirm('Excluir o produto '+sku+'?\\nVendas futuras ficarão sem custo até você cadastrar de novo.')) return;
+  await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'delete',sku})});
+  loadProducts();
+}
+function pmSet(id,v){document.getElementById(id).value=v;}
+function openProd(p){
+  const edit = !!(p && !p.naoCadastrado);   // produto já cadastrado (edição de custo)
+  document.getElementById('prodModalTitle').textContent = !p?'Novo Produto':edit?'Editar Produto':'Cadastrar Produto';
+  pmSet('pmNome', p?(p.nome||''):'');
+  pmSet('pmCusto', p&&p.custo?p.custo:'');
+  pmSet('pmExtra', p&&p.custoExtra?p.custoExtra:'');
+  pmSet('pmSku', p?(p.sku||''):'');
+  pmSet('pmEan', p?(p.ean||''):'');
+  pmSet('pmImposto', (p&&p.imposto!=null?p.imposto:TAXA_PADRAO)*100);
+  document.getElementById('pmSku').readOnly=!!p;
+  document.getElementById('pmPeriodoWrap').style.display=edit?'block':'none';
+  document.getElementById('pmModo').value='novas';
+  pmPeriodoToggle();
+  document.getElementById('pmMsg').textContent='';
+  document.getElementById('prodModal').classList.add('open');
+}
+function closeProd(){document.getElementById('prodModal').classList.remove('open');}
+function pmPeriodoToggle(){
+  const modo=document.getElementById('pmModo').value;
+  document.getElementById('pmDatas').style.display = modo==='periodo'?'flex':'none';
+}
+async function saveProd(){
+  const sku=document.getElementById('pmSku').value.trim();
+  if(!sku){document.getElementById('pmMsg').textContent='Informe o SKU Interno.';return;}
+  const n=v=>parseFloat((v||'').toString().replace(',','.'));
+  const custo=n(document.getElementById('pmCusto').value)||0;
+  const custoExtra=n(document.getElementById('pmExtra').value)||0;
+  const impPct=n(document.getElementById('pmImposto').value);
+  const edit=document.getElementById('pmPeriodoWrap').style.display!=='none';
+  const modo=edit?document.getElementById('pmModo').value:'todas';
+  const body={op:'save',sku,nome:document.getElementById('pmNome').value.trim(),ean:document.getElementById('pmEan').value.trim(),custo,custoExtra,modo};
+  if(!isNaN(impPct)) body.imposto=impPct/100;
+  if(modo==='periodo'){ body.desde=document.getElementById('pmDesde').value; body.ate=document.getElementById('pmAte').value||null;
+    if(!body.desde){document.getElementById('pmMsg').textContent='Escolha a data inicial do período.';return;} }
+  document.getElementById('pmMsg').textContent='Salvando…';
+  await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  closeProd(); loadProducts();
+}
+function openImport(){ document.getElementById('impModal').classList.add('open'); document.getElementById('impMsg').textContent=''; document.getElementById('impFile').value=''; }
+function closeImport(){ document.getElementById('impModal').classList.remove('open'); }
+async function doImport(){
+  const f=document.getElementById('impFile').files[0];
+  if(!f){document.getElementById('impMsg').textContent='Selecione um arquivo .csv';return;}
+  const modo=document.getElementById('impModo').value;
+  const csv=await f.text();
+  document.getElementById('impMsg').textContent='Importando…';
+  try{
+    const j=await(await fetch('/api/products/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv,modo})})).json();
+    document.getElementById('impMsg').textContent='Importados '+(j.importados||0)+' produtos.';
+    setTimeout(()=>{closeImport();loadProducts();},900);
+  }catch(e){ document.getElementById('impMsg').textContent='Erro ao importar. Confira a planilha.'; }
+}
 
 // ===== Configurações (conexão + custos) =====
 let cfgRedirectUri='';
 const $=id=>document.getElementById(id);
 function cfgTab(t){document.querySelectorAll('.mtabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
-  $('tab-conexao').style.display=t==='conexao'?'':'none';$('tab-custos').style.display=t==='custos'?'':'none';
-  if(t==='custos')loadCosts();}
+  $('tab-conexao').style.display=t==='conexao'?'':'none';$('tab-custos').style.display=t==='custos'?'':'none';}
 async function openCfg(tab){
   $('cfgModal').classList.add('open'); cfgTab(tab||'conexao'); $('cfgMsg').textContent='';
   const c=await(await fetch('/api/config')).json();
