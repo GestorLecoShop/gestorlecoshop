@@ -55,8 +55,30 @@ function saveEnv(patch) {
   fs.writeFileSync(path.join(__dirname, '.env'), lines.join('\n') + '\n');
   ML = buildML();
 }
-const TOKENS_FILE = path.join(__dirname, 'tokens.json');
-const COSTS_FILE = path.join(__dirname, 'costs.json');
+// ---------- Onde guardar os dados ----------
+// Na hospedagem, a pasta do projeto é substituída a cada publicação. Por isso os
+// dados (conexões e custos) ficam num DISCO PERSISTENTE quando existir.
+// Ordem: variável DATA_DIR > /var/data (disco do Render) > pasta do projeto.
+function escolherPastaDados() {
+  const candidatos = [ENV.DATA_DIR, '/var/data'].filter(Boolean);
+  for (const dir of candidatos) {
+    try {
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch { /* tenta o próximo */ }
+  }
+  return __dirname;
+}
+const DATA_DIR = escolherPastaDados();
+const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
+const COSTS_FILE = path.join(DATA_DIR, 'costs.json');
+
+// Primeira vez no disco: aproveita o costs.json que veio junto com o código
+if (DATA_DIR !== __dirname && !fs.existsSync(COSTS_FILE)) {
+  const semente = path.join(__dirname, 'costs.json');
+  try { if (fs.existsSync(semente)) fs.copyFileSync(semente, COSTS_FILE); } catch { /* segue */ }
+}
 
 // ---------- Persistência simples ----------
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
@@ -742,6 +764,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n  Leco Shop rodando em  http://localhost:${PORT}`);
+  console.log(`  Dados salvos em: ${DATA_DIR}${DATA_DIR === __dirname ? '  (TEMPORARIO — some a cada publicacao)' : '  (disco persistente OK)'}`);
   for (const c of Object.keys(CONTAS_ML)) {
     console.log(`  ${CONTAS_ML[c].nome}: ${mlConnected(c) ? 'CONECTADO' : 'nao conectado — abra o site e clique em Conectar'}`);
   }
