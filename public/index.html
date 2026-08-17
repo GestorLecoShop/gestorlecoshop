@@ -79,6 +79,26 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .muted{color:var(--muted)}.pill{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--surface2);color:var(--muted);font-weight:600;border:1px solid var(--line)}
 .section-title{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin:26px 2px 4px}
 .loading{text-align:center;color:var(--muted);padding:60px}
+.ord{background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden}
+.ord-head{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ord-dot{width:11px;height:11px;border-radius:50%;flex:none}
+.ord-date{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+.ord-badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:7px;background:var(--surface2);border:1px solid var(--line);color:var(--txt)}
+.ord-mp{margin-left:auto;font-size:12px;font-weight:750;letter-spacing:.3px}
+.ord-tbl th{font-size:10px;padding:10px 12px 6px}
+.ord-tbl td{border-bottom:none;padding:12px}
+.ord-toggle{text-align:center;padding:5px;color:var(--muted);cursor:pointer;border-top:1px solid var(--line);font-size:15px;user-select:none;line-height:1}
+.ord-toggle:hover{background:var(--surface2);color:var(--txt)}
+.ord-exp{padding:18px;border-top:1px solid var(--line);background:var(--surface2);display:grid;grid-template-columns:1.3fr 1fr;gap:20px}
+.ord-meta{display:flex;flex-direction:column;gap:12px}
+.ord-meta .box{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.ord-meta .box .k{font-size:11px;color:var(--muted)}.ord-meta .box .v{font-weight:650;margin-top:2px}
+.brk{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 14px}
+.brk .r{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(38,50,63,.5)}
+.brk .r:last-child{border-bottom:none}
+.brk .r.tot{font-weight:750;font-size:14px}
+.brk .r .lbl2{color:var(--muted)}
+@media(max-width:900px){.ord-exp{grid-template-columns:1fr}}
 .modal{position:fixed;inset:0;background:rgba(6,10,16,.72);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
 .modal.open{display:flex}
 .modal .box{background:var(--surface);border:1px solid var(--line);border-radius:18px;width:100%;max-width:760px;padding:24px}
@@ -299,47 +319,91 @@ async function loadSales(){
     renderSales(j.demo, j.error);
   }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
 }
-const STATUS_PT={paid:'Pago',payment_required:'Aguard. pgto',payment_in_process:'Processando',partially_paid:'Parcial',shipped:'Enviado',delivered:'Entregue',cancelled:'Cancelado',invalid:'Inválido',not_delivered:'Não entregue'};
-let salesSort={k:'data',dir:-1};
+const ENVIO_PT={fulfillment:'FULL',self_service:'Flex',cross_docking:'Coleta',drop_off:'Agência',xd_drop_off:'Correios',me2:'Mercado Envios',custom:'Combinado'};
+const DOT={delivered:'#22c55e',shipped:'#22c55e',paid:'#fbbf24',cancelled:'#fb7185'};
+function fmtFull(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
+function toggleOrd(el){const o=el.closest('.ord');const e=o.querySelector('.ord-exp');const open=e.style.display!=='none';e.style.display=open?'none':'grid';el.textContent=open?'⌄':'⌃';}
+let salesSort='data';
 function renderSales(demo,error){
   const c=document.getElementById('content');
-  const chDot={ml:'#ffe600',amz:'#ff9900',shp:'#ee4d2d',mag:'#0086ff',tik:'#69c9d0',loja:'#a78bfa'};
-  const chName={ml:'Mercado Livre',amz:'Amazon',shp:'Shopee',mag:'Magalu',tik:'TikTok',loja:'Loja'};
   c.innerHTML=`
     ${demo?'<div class="banner demo" style="margin-bottom:16px"><div>🟡 <b>Modo demonstração</b> — vendas de exemplo. Conecte o Mercado Livre para ver as reais.</div></div>':''}
     ${error?`<div class="banner err" style="margin-bottom:16px"><div>⚠ ${error}</div></div>`:''}
-    <div class="card">
-      <div class="card-head"><div><h3 id="salesCount"></h3><div class="hint">Pedidos do período · ordene clicando nos títulos</div></div>
-        <input class="search" id="salesSearch" placeholder="Buscar produto, SKU ou nº do pedido…"></div>
-      <div class="tbl-wrap"><table id="salesTable"><thead><tr>
-        <th data-k="data">Data</th><th data-k="canal">Canal</th><th data-k="id">Pedido</th>
-        <th data-k="produto">Produto</th><th class="num" data-k="qtd">Qtd</th>
-        <th class="num" data-k="valor">Valor</th><th class="num" data-k="comissao">Comissão</th>
-        <th class="num" data-k="liquido">Líquido</th><th data-k="status">Status</th>
-      </tr></thead><tbody id="salesBody"></tbody></table></div>
+    <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding:16px 20px">
+      <h3 id="salesCount"></h3>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select class="sel" id="salesSortSel">
+          <option value="data">Mais recentes</option>
+          <option value="lucro">Maior lucro</option>
+          <option value="total">Maior valor</option>
+        </select>
+        <input class="search" id="salesSearch" placeholder="Buscar produto, SKU ou nº do pedido…">
+      </div>
+    </div>
+    <div id="ordList"></div>`;
+  function orderCard(o){
+    const dot=DOT[o.status]||'#8a99ab';
+    const envio=ENVIO_PT[o.envio]||'Mercado Envios';
+    const r=o.resumo;
+    const linhas=o.itens.map(it=>`<tr>
+      <td><div>${it.titulo}</div><div class="sku">SKU: ${it.sku||'—'}</div></td>
+      <td class="num">${it.qtd}</td>
+      <td class="num">${BRL(it.total)}</td>
+      <td class="num">${BRL(it.precoUnit)}</td>
+      <td class="num">${BRL(it.liquido)}</td>
+      <td class="num muted">${BRL(it.imposto)}</td>
+      <td class="num muted">${BRL(it.custo)}</td>
+      <td class="num muted">${BRL(it.custoExtra)}</td>
+      <td class="num ${it.lucro<0?'neg':'pos'}" style="font-weight:700">${BRL(it.lucro)}</td>
+      <td style="text-align:center"><span class="badge ${it.margem<0?'Z':it.margem>=25?'A':'C'}">${PCT(it.margem)}</span></td>
+    </tr>`).join('');
+    return `<div class="ord">
+      <div class="ord-head">
+        <span class="ord-dot" style="background:${dot}"></span>
+        <span class="ord-date">📅 ${fmtFull(o.data)}</span>
+        <span class="ord-badge">${envio}</span>
+        ${o.pack?'<span class="ord-badge">Pacote</span>':''}
+        <span class="ord-mp">${o.marketplace}</span>
+      </div>
+      <div class="tbl-wrap"><table class="ord-tbl"><thead><tr>
+        <th>Item</th><th class="num">Qtd</th><th class="num">Total</th><th class="num">Preço Unit.</th>
+        <th class="num">Líquido do Mkt</th><th class="num">Imposto</th><th class="num">Custo Produto</th>
+        <th class="num">Custo Extra</th><th class="num">Lucro</th><th style="text-align:center">Margem</th>
+      </tr></thead><tbody>${linhas}</tbody></table></div>
+      <div class="ord-exp" style="display:none">
+        <div class="ord-meta">
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div class="box" style="flex:1;min-width:150px"><div class="k">Data de criação</div><div class="v">${fmtFull(o.data)}</div></div>
+            <div class="box" style="flex:1;min-width:150px"><div class="k">Data de aprovação</div><div class="v">${fmtFull(o.dataAprov)}</div></div>
+          </div>
+          <div class="box"><div class="k">ID do pedido</div><div class="v">${o.id}</div></div>
+        </div>
+        <div class="brk">
+          <div class="r"><span class="lbl2">Total do Pedido</span><b class="pos">+ ${BRL(r.totalProduto)}</b></div>
+          <div class="r"><span class="lbl2">Frete (pago pelo vendedor)</span><b class="neg">– ${BRL(r.freteVend)}</b></div>
+          ${r.descontos?`<div class="r"><span class="lbl2">Descontos e Bônus</span><b class="pos">+ ${BRL(r.descontos)}</b></div>`:''}
+          ${r.freteComp?`<div class="r"><span class="lbl2">Frete (pago pelo comprador)</span><b class="muted">repassado</b></div>`:''}
+          <div class="r"><span class="lbl2">Comissão</span><b class="neg">– ${BRL(r.comissao)}</b></div>
+          <div class="r tot"><span>Líquido do Marketplace</span><b>${BRL(r.liquido)}</b></div>
+          <div class="r"><span class="lbl2">Imposto</span><b class="neg">– ${BRL(r.imposto)}</b></div>
+          <div class="r"><span class="lbl2">Custo dos produtos</span><b class="neg">– ${BRL(r.custo)}</b></div>
+          <div class="r tot"><span>Lucro do pedido</span><b class="${r.lucro<0?'neg':'pos'}">${BRL(r.lucro)}</b></div>
+        </div>
+      </div>
+      <div class="ord-toggle" onclick="toggleOrd(this)">⌄</div>
     </div>`;
-  const fmtDate=iso=>{const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());};
+  }
   function draw(){
     const q=(document.getElementById('salesSearch').value||'').toLowerCase();
-    let rows=SALES.filter(s=>String(s.produto).toLowerCase().includes(q)||String(s.sku).toLowerCase().includes(q)||String(s.id).toLowerCase().includes(q));
-    const k=salesSort.k, dir=salesSort.dir;
-    rows.sort((a,b)=>{let x=a[k],y=b[k];if(k==='data'){x=new Date(x).getTime();y=new Date(y).getTime();}if(typeof x==='string')return dir*String(x).localeCompare(String(y));return dir*((x||0)-(y||0));});
+    let rows=SALES.filter(o=>o.itens.some(it=>String(it.titulo).toLowerCase().includes(q)||String(it.sku).toLowerCase().includes(q))||String(o.id).toLowerCase().includes(q));
+    if(salesSort==='data')rows.sort((a,b)=>new Date(b.data)-new Date(a.data));
+    else rows.sort((a,b)=>(b.resumo[salesSort]||0)-(a.resumo[salesSort]||0));
     document.getElementById('salesCount').textContent=rows.length+' vendas';
-    document.getElementById('salesBody').innerHTML=rows.map(s=>`<tr>
-      <td>${fmtDate(s.data)}</td>
-      <td><span style="display:inline-flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:3px;background:${chDot[s.canal]||'#8a99ab'}"></span>${chName[s.canal]||s.canal}</span></td>
-      <td class="sku">${s.id}</td>
-      <td><div>${s.produto}</div><div class="sku">${s.sku||''}</div></td>
-      <td class="num">${s.qtd}</td>
-      <td class="num">${BRL(s.valor)}</td>
-      <td class="num neg">${BRL(-Math.abs(s.comissao))}</td>
-      <td class="num" style="font-weight:700">${BRL(s.liquido)}</td>
-      <td><span class="badge ${s.status==='cancelled'?'Z':s.status==='delivered'?'A':'B'}">${STATUS_PT[s.status]||s.status}</span></td>
-    </tr>`).join('')||'<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">Nenhuma venda no período. Troque o filtro de tempo no topo.</td></tr>';
+    document.getElementById('ordList').innerHTML=rows.map(orderCard).join('')||'<div class="card" style="text-align:center;color:var(--muted);padding:40px">Nenhuma venda no período. Troque o filtro de tempo no topo.</div>';
   }
   draw();
   document.getElementById('salesSearch').oninput=draw;
-  document.querySelectorAll('#salesTable th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(salesSort.k===k)salesSort.dir*=-1;else{salesSort.k=k;salesSort.dir=(['data','valor','liquido','qtd','comissao'].includes(k))?-1:1;}draw();});
+  document.getElementById('salesSortSel').onchange=e=>{salesSort=e.target.value;draw();};
 }
 
 function renderConn(){
