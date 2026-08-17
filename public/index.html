@@ -361,13 +361,23 @@ const PCT=v=>(v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFract
 const ORDER=['ml','ldmsc','amz','shp','mag','tik','loja'];
 const CONTAS_ML=['ml','ldmsc'];   // contas do Mercado Livre (cada uma é um canal)
 let DATA=null, CH={}, DRE={}, ABC={}, PRODUTOS=[], SALES=[];
-let SEM_ASSOC=0;   // vendas de anúncios ainda não associados a um produto
+// Anúncios vendidos que ainda não têm produto cadastrado/associado.
+// O alerta é GLOBAL: não depende do filtro de período e só some quando for resolvido.
+let SEM_ASSOC=0, PENDENTES=[], VARREDURA=null;
 function setSemAssoc(n){
   if(n==null) return;
   SEM_ASSOC=n;
   const a=document.getElementById('navSemAssoc'), b=document.getElementById('navSemAssocN');
   if(a) a.style.display = n>0 ? '' : 'none';
   if(b) b.textContent = n>0 ? n : '';
+  pintarBanner();
+}
+async function carregarPendentes(varrer){
+  try{
+    const j=await(await fetch('/api/pendentes'+(varrer?'?varrer=1&dias=90':''))).json();
+    PENDENTES=j.pendentes||[]; VARREDURA=j.varreduraEm||null; setSemAssoc(PENDENTES.length);
+  }catch(e){}
+  return PENDENTES;
 }
 let state={channel:'all',period:'hoje',trendMetric:'fat',view:'dashboard'};
 let charts={};
@@ -408,7 +418,6 @@ async function loadDashboard(){
   const r=await fetch(`/api/dashboard?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}`);
   DATA=await r.json();
   CH=DATA.channels||{}; DRE=DATA.dreDetail||{};
-  setSemAssoc(DATA.semAssoc);
   aplicarCanal();
   renderBanner(); renderConn(); mount();
 }
@@ -422,7 +431,7 @@ function goView(v){
   const np=document.getElementById('navProdutos'); if(np) np.classList.toggle('on',v==='produtos');
   const ns=document.getElementById('navSemAssoc'); if(ns) ns.classList.toggle('on',v==='semassoc');
   document.querySelector('.top h1').textContent = v==='vendas'?'Vendas':v==='produtos'?'Produtos':v==='semassoc'?'Vendas sem associação':'Visão Geral';
-  const f=document.querySelector('.filters'); if(f) f.style.display = v==='produtos'?'none':'flex';
+  const f=document.querySelector('.filters'); if(f) f.style.display = (v==='produtos'||v==='semassoc')?'none':'flex';
   refresh();
 }
 async function loadSales(){
@@ -433,8 +442,8 @@ async function loadSales(){
     const canal = CONTAS_ML.includes(state.channel) ? '&canal='+state.channel : '';
     const r=await fetch(`/api/sales?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}${canal}`);
     const j=await r.json(); SALES=j.sales||[];
-    setSemAssoc(j.semAssoc);
     renderSales(j.demo, j.error);
+    carregarPendentes();
   }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
 }
 const ENVIO_PT={fulfillment:'FULL',self_service:'Flex',cross_docking:'Coleta',drop_off:'Agência',xd_drop_off:'Correios',me2:'Mercado Envios',custom:'Combinado'};
@@ -445,7 +454,6 @@ let salesSort='data';
 function renderSales(demo,error){
   const c=document.getElementById('content');
   c.innerHTML=`
-    ${barraSemAssoc()}
     ${demo?'<div class="banner demo" style="margin-bottom:16px"><div>🟡 <b>Modo demonstração</b> — vendas de exemplo. Conecte o Mercado Livre para ver as reais.</div></div>':''}
     ${error?`<div class="banner err" style="margin-bottom:16px"><div>⚠ ${error}</div></div>`:''}
     <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding:16px 20px">
@@ -521,74 +529,60 @@ function renderSales(demo,error){
     document.getElementById('salesCount').textContent=rows.length+' vendas';
     document.getElementById('ordList').innerHTML=rows.map(orderCard).join('')||'<div class="card" style="text-align:center;color:var(--muted);padding:40px">Nenhuma venda no período. Troque o filtro de tempo no topo.</div>';
   }
-  draw();
+  draw(); pintarBanner();
   document.getElementById('salesSearch').oninput=draw;
   document.getElementById('salesSortSel').onchange=e=>{salesSort=e.target.value;draw();};
 }
 
-// ===== Vendas sem produto associado =====
+// ===== Anúncios sem produto associado (lista global, não depende do período) =====
 async function loadSemAssoc(){
-  const pr=periodRange(state.period);
-  document.getElementById('periodLabel').textContent=pr.label;
-  document.getElementById('content').innerHTML='<div class="loading">Buscando vendas sem associação…</div>';
-  try{
-    const canal = CONTAS_ML.includes(state.channel) ? '&canal='+state.channel : '';
-    const r=await fetch(`/api/sales?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}${canal}&semAssoc=1`);
-    const j=await r.json(); SALES=j.sales||[];
-    setSemAssoc(j.semAssoc);
-    renderSemAssoc();
-  }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
+  document.getElementById('periodLabel').textContent='Lista completa — não depende do filtro de período';
+  document.getElementById('content').innerHTML='<div class="loading">Carregando anúncios pendentes…</div>';
+  await carregarPendentes();
+  renderSemAssoc();
 }
-let ANUNCIOS={};
+async function varrer90(){
+  document.getElementById('content').innerHTML='<div class="loading">Procurando nas vendas dos últimos 90 dias… pode levar até 1 minuto.</div>';
+  await carregarPendentes(true);
+  renderSemAssoc();
+}
 function renderSemAssoc(){
   const c=document.getElementById('content');
-  if(!SALES.length){
+  const rodape=`<div class="card" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 20px">
+      <div class="hint" style="margin:0">${VARREDURA?('Última varredura completa: '+fmtFull(VARREDURA)):'Ainda não foi feita uma varredura completa.'}</div>
+      <button class="btn ghost" onclick="varrer90()">Procurar nos últimos 90 dias</button></div>`;
+  if(!PENDENTES.length){
     c.innerHTML=`<div class="card" style="text-align:center;padding:44px">
-      <h3 style="justify-content:center">✅ Nenhuma venda pendente</h3>
-      <div class="hint" style="margin-top:8px">Todos os anúncios do período estão associados a um produto.</div>
-      <div class="mrow" style="justify-content:center"><button class="btn" onclick="goView('vendas')">Ir para Vendas</button></div></div>`;
+      <h3 style="justify-content:center">✅ Nenhum anúncio pendente</h3>
+      <div class="hint" style="margin-top:8px">Todos os anúncios vendidos estão ligados a um produto cadastrado.</div>
+      <div class="mrow" style="justify-content:center"><button class="btn" onclick="goView('vendas')">Ir para Vendas</button></div></div>`+rodape;
     return;
   }
-  ANUNCIOS={};
-  const cards=SALES.map((o,oi)=>{
-    const envio=ENVIO_PT[o.envio]||'Mercado Envios';
-    const linhas=o.itens.map((it,ii)=>{
-      const id=oi+'_'+ii; ANUNCIOS[id]={chave:it.chave, titulo:it.titulo, anuncioId:it.anuncioId};
-      const pend=it.associado===false;
-      return `<tr>
-        <td><div style="display:flex;align-items:center;gap:10px">${it.img?`<img class="ord-thumb" src="${it.img}" loading="lazy" onerror="this.style.display='none'">`:'<div class="ord-thumb ph"></div>'}
-          <div><div>${it.titulo}</div>
-          <div class="sku">${it.chave?('Anúncio/SKU: '+it.chave):'sem identificação'}${it.anuncioId&&it.anuncioId!==it.chave?(' · '+it.anuncioId):''}</div></div></div></td>
-        <td class="num">${it.qtd}</td>
-        <td class="num">${BRL(it.total)}</td>
-        <td style="text-align:right;white-space:nowrap">${pend?`
-          <button class="btn" style="padding:6px 12px" onclick="criarDoAnuncio('${id}')">Criar produto</button>
-          <button class="btn ghost" style="padding:6px 12px" onclick="abrirAssociar('${id}')">Associar</button>`
-          :'<span class="badge A">associado</span>'}</td></tr>`;
-    }).join('');
-    return `<div class="ord">
+  const cards=PENDENTES.map((a,i)=>`<div class="ord">
       <div class="ord-head">
         <span class="ord-dot" style="background:#fb7185"></span>
-        <span class="ord-date">📅 ${fmtFull(o.data)}</span>
-        <span class="ord-badge">${envio}</span>
-        <span class="ord-badge">Pedido ${o.id}</span>
-        <span class="ord-mp">${o.marketplace}</span>
+        <span class="ord-date">📅 última venda: ${a.ultima?fmtFull(a.ultima):'—'}</span>
+        <span class="ord-mp">${NOME_CANAL[a.canal]||'Mercado Livre'}</span>
       </div>
-      <div class="tbl-wrap"><table class="ord-tbl"><thead><tr>
-        <th>Anúncio vendido</th><th class="num">Qtd</th><th class="num">Total</th><th style="text-align:right">Ação</th>
-      </tr></thead><tbody>${linhas}</tbody></table></div>
-    </div>`;
-  }).join('');
+      <div class="tbl-wrap"><table class="ord-tbl"><tbody><tr>
+        <td><div style="display:flex;align-items:center;gap:10px">${a.img?`<img class="ord-thumb" src="${a.img}" loading="lazy" onerror="this.style.display='none'">`:'<div class="ord-thumb ph"></div>'}
+          <div><div>${a.titulo}</div>
+          <div class="sku">Anúncio/SKU: ${a.chave}${a.anuncioId&&a.anuncioId!==a.chave?(' · '+a.anuncioId):''}</div></div></div></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn" style="padding:6px 12px" onclick="criarDoAnuncio(${i})">Criar produto</button>
+          <button class="btn ghost" style="padding:6px 12px" onclick="abrirAssociar(${i})">Associar</button></td>
+      </tr></tbody></table></div>
+    </div>`).join('');
   c.innerHTML=`<div class="banner err" style="margin-bottom:16px">
-      <div>⚠ <b>${SALES.length} venda${SALES.length>1?'s':''} fora das contas.</b> Cadastre ou associe o anúncio a um produto para que ${SALES.length>1?'elas entrem':'ela entre'} no faturamento e no lucro.</div></div>`
-    + cards;
+      <div>⚠ <b>${PENDENTES.length} anúncio${PENDENTES.length>1?'s':''} fora das contas.</b> Cadastre o produto ou associe a um já existente — vale para as vendas passadas e futuras.</div></div>`
+    + cards + rodape;
 }
-function criarDoAnuncio(id){
-  const a=ANUNCIOS[id]; if(!a) return;
+function criarDoAnuncio(i){
+  const a=PENDENTES[i]; if(!a) return;
   openProd({sku:a.chave, nome:a.titulo, custo:'', custoExtra:'', imposto:TAXA_PADRAO, naoCadastrado:true});
 }
-async function abrirAssociar(id){
-  const a=ANUNCIOS[id]; if(!a) return;
+async function abrirAssociar(i){
+  const a=PENDENTES[i]; if(!a) return;
   document.getElementById('asChave').value=a.chave;
   document.getElementById('asAnuncio').textContent=a.titulo+(a.chave?('  ·  '+a.chave):'');
   document.getElementById('asMsg').textContent='';
@@ -607,7 +601,7 @@ async function salvarAssociacao(){
   if(!sku){ document.getElementById('asMsg').textContent='Escolha um produto.'; return; }
   document.getElementById('asMsg').textContent='Associando…';
   const r=await(await fetch('/api/associar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chave,sku})})).json();
-  if(r.ok){ fecharAssociar(); loadSemAssoc(); }
+  if(r.ok){ fecharAssociar(); await carregarPendentes(); renderSemAssoc(); }
   else document.getElementById('asMsg').textContent=r.error||'Erro ao associar.';
 }
 
@@ -654,18 +648,25 @@ function aplicarCanal(){
 function activeChannelKeys(){ return state.channel==='all'?ORDER:[state.channel]; }
 function agg(keys){let t={fat:0,liq:0,lb:0,ads:0,lucro:0};keys.forEach(k=>{const c=CH[k];if(!c)return;t.fat+=c.fat||0;t.liq+=c.liq||0;t.lb+=c.lucroBruto||0;t.ads+=c.ads||0;t.lucro+=c.lucro||0;});return t;}
 
-// Alerta fixo enquanto houver vendas sem produto associado (elas ficam fora das contas)
+// Alerta fixo enquanto houver anúncio sem produto associado (as vendas ficam fora das contas)
 function barraSemAssoc(){
   if(!SEM_ASSOC) return '';
-  const n=SEM_ASSOC, plural=n>1;
-  return `<div class="banner err" style="margin-bottom:16px">
-    <div>⚠ <b>${n} venda${plural?'s':''} sem produto associado</b> — ${plural?'elas não estão':'ela não está'} entrando no faturamento nem no lucro.</div>
+  const n=SEM_ASSOC, p=n>1;
+  return `<div class="banner err sa" style="margin-bottom:16px">
+    <div>⚠ <b>${n} anúncio${p?'s':''} sem produto associado</b> — ${p?'as vendas deles não estão':'as vendas dele não estão'} entrando no faturamento nem no lucro.</div>
     <button class="btn" onclick="goView('semassoc')">Resolver agora</button></div>`;
+}
+// Coloca (ou tira) o alerta no topo da página atual, seja qual for o filtro de período
+function pintarBanner(){
+  const c=document.getElementById('content'); if(!c) return;
+  const velho=c.querySelector('.banner.err.sa'); if(velho) velho.remove();
+  if(!SEM_ASSOC || state.view==='semassoc') return;
+  c.insertAdjacentHTML('afterbegin', barraSemAssoc());
 }
 function mount(){
   const c=document.getElementById('content');
-  c.innerHTML=barraSemAssoc(); c.appendChild(document.getElementById('tpl').content.cloneNode(true));
-  bindEvents(); renderAll();
+  c.innerHTML=''; c.appendChild(document.getElementById('tpl').content.cloneNode(true));
+  bindEvents(); renderAll(); pintarBanner();
 }
 function renderAll(){renderKPIs();renderTrend();renderDonut();renderDRE();renderABC();renderChannelBars();renderTable();}
 
@@ -898,7 +899,9 @@ async function saveProd(){
     if(!body.desde){document.getElementById('pmMsg').textContent='Escolha a data inicial do período.';return;} }
   document.getElementById('pmMsg').textContent='Salvando…';
   await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  closeProd(); if(state.view==='semassoc') loadSemAssoc(); else loadProducts();
+  closeProd();
+  if(state.view==='semassoc'){ await carregarPendentes(); renderSemAssoc(); }
+  else { await carregarPendentes(); loadProducts(); }
 }
 function openImport(){ document.getElementById('impModal').classList.add('open'); document.getElementById('impMsg').textContent=''; document.getElementById('impFile').value=''; }
 function closeImport(){ document.getElementById('impModal').classList.remove('open'); }
@@ -1021,6 +1024,7 @@ if('serviceWorker' in navigator){
 }
 
 loadDashboard();
+carregarPendentes();   // alerta global de anúncios sem produto (independe do período)
 </script>
 </body>
 </html>
