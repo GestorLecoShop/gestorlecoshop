@@ -266,32 +266,74 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
 
 const round2 = (v) => Math.round(v * 100) / 100;
 
-// Lista de vendas individuais (para a página "Vendas")
+// Monta o objeto detalhado de UM pedido (usado por mlListSales e demoSales)
+// itens: [{ titulo, sku, qtd, unit, total, precoUnit, liquido, imposto, custo, custoExtra, lucro, margem, comissao }]
+// resumo: totais do pedido para a área expansível (estilo Gestor Seller)
+function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteVend, freteComp, descontos }) {
+  const taxaPadrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.09;
+  const totalProduto = itemsRaw.reduce((s, it) => s + it.unit * it.qtd, 0) || 1e-9;
+  const itens = itemsRaw.map((it) => {
+    const tp = it.unit * it.qtd;
+    const share = tp / totalProduto;
+    const fVend = freteVend * share, desc = descontos * share, fComp = freteComp * share;
+    const conf = costs.itens[it.sku] || {};
+    const taxa = conf.imposto != null ? conf.imposto : taxaPadrao;
+    const custoUnit = conf.custo != null ? conf.custo : 0;
+    const imposto = tp * taxa, custo = custoUnit * it.qtd;
+    const liquido = tp - it.comissao - fVend + desc;      // líquido do marketplace
+    const lucro = liquido - imposto - custo;
+    const totalExib = tp + fComp;                          // total pago pelo comprador
+    const margem = totalExib ? (lucro / totalExib) * 100 : 0;
+    return {
+      titulo: it.titulo, sku: it.sku, qtd: it.qtd,
+      precoUnit: round2(it.unit), total: round2(totalExib),
+      liquido: round2(liquido), imposto: round2(imposto),
+      custo: round2(custo), custoExtra: 0,
+      lucro: round2(lucro), margem: round2(margem), comissao: round2(it.comissao),
+      freteVend: round2(fVend), freteComp: round2(fComp), descontos: round2(desc),
+    };
+  });
+  const soma = (k) => itens.reduce((s, i) => s + i[k], 0);
+  const comissaoTot = soma('comissao');
+  return {
+    id: String(id), data, dataAprov: dataAprov || data, status, canal: 'ml', marketplace: 'Mercado Livre',
+    envio: envio || '', pack: !!pack,
+    itens,
+    resumo: {
+      totalProduto: round2(totalProduto), total: round2(totalProduto + freteComp),
+      freteVend: round2(freteVend), freteComp: round2(freteComp), descontos: round2(descontos),
+      comissao: round2(comissaoTot), imposto: round2(soma('imposto')), custo: round2(soma('custo')),
+      liquido: round2(soma('liquido')), lucro: round2(soma('lucro')),
+    },
+  };
+}
+
+// Lista de vendas individuais detalhadas (para a página "Vendas")
 async function mlListSales(fromISO, toISO) {
   const me = await mlApi('/users/me');
   const orders = await mlFetchOrders(me.id, fromISO, toISO);
-  return orders.map((o) => {
+  const out = [];
+  for (const o of orders) {
     const items = o.order_items || [];
-    const first = items[0] || {};
-    const titulo = (first.item && first.item.title) || '—';
-    const extra = items.length > 1 ? ` +${items.length - 1} item(ns)` : '';
-    const qtd = items.reduce((s, it) => s + (it.quantity || 0), 0);
-    const valor = o.total_amount != null ? o.total_amount : items.reduce((s, it) => s + (it.unit_price || 0) * (it.quantity || 0), 0);
-    const comissao = items.reduce((s, it) => s + (it.sale_fee || 0) * (it.quantity || 0), 0);
-    const sku = (first.item && (first.item.seller_sku || first.item.seller_custom_field)) || '';
-    return {
-      id: String(o.id),
-      data: o.date_created,
-      canal: 'ml',
-      produto: titulo + extra,
-      sku,
-      qtd,
-      valor: round2(valor),
-      comissao: round2(comissao),
-      liquido: round2(valor - comissao),
-      status: o.status,
-    };
-  });
+    let freteVend = 0;
+    if (o.shipping && o.shipping.id) freteVend = await mlShippingSellerCost(o.shipping.id);
+    const pays = o.payments || [];
+    const freteComp = pays.reduce((s, pp) => s + (pp.shipping_cost || 0), 0);
+    const descontos = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
+    const itemsRaw = items.map((it) => ({
+      titulo: (it.item && it.item.title) || '—',
+      sku: (it.item && (it.item.seller_sku || it.item.seller_custom_field)) || '',
+      qtd: it.quantity || 0,
+      unit: it.unit_price || 0,
+      comissao: (it.sale_fee || 0) * (it.quantity || 0),
+    }));
+    out.push(buildOrder({
+      id: o.id, data: o.date_created, dataAprov: o.date_closed, status: o.status,
+      envio: (o.shipping && o.shipping.logistic_type) || '', pack: !!o.pack_id,
+      itemsRaw, freteVend, freteComp, descontos,
+    }));
+  }
+  return out;
 }
 
 // Vendas de exemplo (modo demonstração) geradas a partir dos produtos demo
@@ -299,22 +341,20 @@ function demoSales() {
   const prods = (DEMO && DEMO.produtos) ? DEMO.produtos.filter((p) => p[2] > 0).slice(0, 12) : [];
   const now = Date.now();
   const st = ['paid', 'shipped', 'delivered'];
+  const env = ['self_service', 'cross_docking', 'fulfillment'];
   return prods.map((p, i) => {
     const qtd = 1 + (i % 3);
-    const valor = round2((p[3] / p[2]) * qtd);
-    const comissao = round2(valor * 0.14);
-    return {
-      id: 'DEMO' + (2000000000 + i),
+    const unit = round2(p[3] / p[2]);
+    const comissao = round2(unit * qtd * 0.13);
+    const freteVend = 12 + (i % 4) * 3.5;
+    return buildOrder({
+      id: 2000000000 + i,
       data: new Date(now - i * 36e5 * 5).toISOString(),
-      canal: 'ml',
-      produto: p[0],
-      sku: p[1],
-      qtd,
-      valor,
-      comissao,
-      liquido: round2(valor - comissao),
-      status: st[i % 3],
-    };
+      dataAprov: new Date(now - i * 36e5 * 5 + 120000).toISOString(),
+      status: st[i % 3], envio: env[i % 3], pack: i % 4 === 0,
+      itemsRaw: [{ titulo: p[0], sku: p[1], qtd, unit, comissao }],
+      freteVend, freteComp: i % 2 ? 4.99 : 0, descontos: i % 3 ? 1.6 : 0,
+    });
   });
 }
 
