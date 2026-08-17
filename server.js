@@ -91,6 +91,9 @@ function normalizeCosts(c) {
   c = c || {};
   c.taxaPadrao = c.taxaPadrao != null ? c.taxaPadrao : 0.09;
   c.itens = c.itens || {};
+  // Anuncios do marketplace apontando para um produto interno.
+  // Ex.: { "MLB123456": "KIT50X" } - a venda desse anuncio usa o custo do KIT50X.
+  c.aliases = c.aliases || {};
   for (const sku of Object.keys(c.itens)) {
     const it = c.itens[sku];
     if (!Array.isArray(it.custos)) {
@@ -265,15 +268,19 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true, conta = 'ml
   const orders = await mlFetchOrders(sellerId, fromISO, toISO, conta);
 
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
+  let pedidosSemAssoc = 0;
   const bySku = {}; // sku -> { nome, un, fat, comissao, custo, imposto }
 
   for (const o of orders) {
+    // Venda com anuncio nao associado a produto NAO entra nas contas (fica no alerta)
+    const semAssoc = (o.order_items || []).some((it) => !temAssociacao(chaveAnuncio(it.item)));
+    if (semAssoc) { pedidosSemAssoc++; continue; }
     for (const it of (o.order_items || [])) {
       const qty = it.quantity || 0;
       const unit = it.unit_price || 0;
       const receita = unit * qty;
       const fee = (it.sale_fee || 0) * qty; // comissão por unidade * qtd
-      const sku = (it.item && (it.item.seller_sku || it.item.seller_custom_field)) || (it.item && it.item.id) || 'SEM_SKU';
+      const sku = resolverSku(chaveAnuncio(it.item)) || 'SEM_SKU';
       const nome = (it.item && it.item.title) || sku;
       const cf = costFor(sku, o.date_created);            // custo vigente na data da venda
       const custoItem = (cf.custo + cf.custoExtra) * qty;
@@ -311,7 +318,8 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true, conta = 'ml
     fat: round2(fat), liq: round2(liq), lucroBruto: round2(lb),
     ads: 0, // ML Ads: integração separada (Product Ads API) — fase seguinte
     lucro: round2(lb),
-    pedidos: orders.length,
+    pedidos: orders.length - pedidosSemAssoc,
+    semAssoc: pedidosSemAssoc,
   };
   const dreDetail = {
     fat: round2(fat),
@@ -327,6 +335,14 @@ const round2 = (v) => Math.round(v * 100) / 100;
 
 // Data de hoje em ISO curto (YYYY-MM-DD), fuso local
 const todayISO = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+
+// ---------- Associacao anuncio -> produto ----------
+// A "chave" identifica o anuncio: o SKU do vendedor ou, se nao houver, o ID do anuncio (MLB...).
+const chaveAnuncio = (item) => (item && (item.seller_sku || item.seller_custom_field)) || (item && item.id) || '';
+// Resolve a chave para o SKU do produto interno (usando as associacoes feitas na tela)
+const resolverSku = (chave) => (costs.aliases && costs.aliases[chave]) || chave;
+// Esta associado? = existe produto cadastrado com esse SKU
+const temAssociacao = (chave) => !!(chave && costs.itens[resolverSku(chave)]);
 
 // Retorna o custo vigente de um SKU na data da venda (histórico)
 function costFor(sku, dateISO) {
@@ -383,6 +399,7 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     const margem = totalExib ? (lucro / totalExib) * 100 : 0;
     return {
       titulo: it.titulo, sku: it.sku, qtd: it.qtd, img: it.img || '',
+      chave: it.chave || it.sku, anuncioId: it.anuncioId || '', associado: it.associado !== false,
       precoUnit: round2(it.unit), total: round2(totalExib),
       liquido: round2(liquido), imposto: round2(imposto),
       custo: round2(custo), custoExtra: round2(custoExtra),
@@ -395,6 +412,7 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
   return {
     id: String(id), data, dataAprov: dataAprov || data, status,
     canal: conta, marketplace: (CONTAS_ML[conta] || CONTAS_ML.ml).nome,
+    semAssoc: itens.some((i) => i.associado === false),
     envio: envio || '', pack: !!pack,
     itens,
     resumo: {
@@ -443,7 +461,10 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
     const descontos = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
     const itemsRaw = items.map((it) => ({
       titulo: (it.item && it.item.title) || '—',
-      sku: (it.item && (it.item.seller_sku || it.item.seller_custom_field)) || '',
+      chave: chaveAnuncio(it.item),
+      anuncioId: (it.item && it.item.id) || '',
+      sku: resolverSku(chaveAnuncio(it.item)),
+      associado: temAssociacao(chaveAnuncio(it.item)),
       qtd: it.quantity || 0,
       unit: it.unit_price || 0,
       comissao: (it.sale_fee || 0) * (it.quantity || 0),
@@ -562,7 +583,9 @@ async function buildDashboard({ from, to }) {
   const abc = classifyABC(produtos);
   const abcPorCanal = {};
   for (const conta of Object.keys(produtosPorCanal)) abcPorCanal[conta] = classifyABC(produtosPorCanal[conta]);
-  return { channels, dreDetail, abc, abcPorCanal, produtos, produtosPorCanal, status, demo: false, period: { from, to } };
+  // Total de vendas deixadas de fora por falta de associacao (alerta na tela)
+  const semAssoc = Object.keys(channels).reduce((s, k) => s + ((channels[k] && channels[k].semAssoc) || 0), 0);
+  return { channels, dreDetail, abc, abcPorCanal, produtos, produtosPorCanal, semAssoc, status, demo: false, period: { from, to } };
 }
 
 // ================= ROTEAMENTO HTTP =================
@@ -642,6 +665,23 @@ const server = http.createServer(async (req, res) => {
       if (b.op === 'delete') { delete costs.itens[String(b.sku || '').trim()]; writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true }); }
       if (b.op === 'save') { upsertProduct(b); writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true }); }
       return sendJSON(res, 400, { error: 'op inválida' });
+    }
+    // Associa um anuncio do marketplace a um produto interno ja existente
+    if (p === '/api/associar' && req.method === 'POST') {
+      const b = await readBody(req);
+      const chave = String(b.chave || '').trim();
+      const sku = String(b.sku || '').trim();
+      if (!chave || !sku) return sendJSON(res, 400, { error: 'informe o anuncio e o produto' });
+      if (!costs.itens[sku]) return sendJSON(res, 400, { error: 'produto nao encontrado: ' + sku });
+      costs.aliases[chave] = sku;
+      writeJSON(COSTS_FILE, costs);
+      return sendJSON(res, 200, { ok: true, chave, sku });
+    }
+    if (p === '/api/desassociar' && req.method === 'POST') {
+      const b = await readBody(req);
+      delete costs.aliases[String(b.chave || '').trim()];
+      writeJSON(COSTS_FILE, costs);
+      return sendJSON(res, 200, { ok: true });
     }
     if (p === '/api/products/export' || p === '/api/products/template') {
       const tpl = p.endsWith('template');
@@ -748,7 +788,11 @@ const server = http.createServer(async (req, res) => {
         catch (e) { erros.push(`${CONTAS_ML[conta].nome}: ${String(e.message || e)}`); }
       }
       sales.sort((a, b) => new Date(b.data) - new Date(a.data));
-      return sendJSON(res, 200, { sales, demo: false, error: erros.length ? erros.join(' | ') : undefined });
+      const semAssoc = sales.filter((s) => s.semAssoc).length;
+      // ?semAssoc=1 lista SO as vendas com anuncio nao associado
+      const soSemAssoc = u.searchParams.get('semAssoc') === '1';
+      const lista = soSemAssoc ? sales.filter((s) => s.semAssoc) : sales;
+      return sendJSON(res, 200, { sales: lista, semAssoc, demo: false, error: erros.length ? erros.join(' | ') : undefined });
     }
     if (p.startsWith('/api/disconnect/')) {
       const conta = p.split('/')[3];
