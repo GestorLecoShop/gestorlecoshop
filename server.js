@@ -62,7 +62,26 @@ const COSTS_FILE = path.join(__dirname, 'costs.json');
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 const writeJSON = (f, o) => fs.writeFileSync(f, JSON.stringify(o, null, 2));
 let tokens = readJSON(TOKENS_FILE, {});          // { ml: { access_token, refresh_token, expires_at, user_id } }
-let costs = readJSON(COSTS_FILE, { taxaPadrao: 0.09, itens: {} });
+
+// Normaliza o arquivo de custos para o novo formato com HISTÓRICO por data.
+// Cada item: { nome, ean, imposto, custos: [ { desde:'YYYY-MM-DD', ate:null, custo, custoExtra } ] }
+function normalizeCosts(c) {
+  c = c || {};
+  c.taxaPadrao = c.taxaPadrao != null ? c.taxaPadrao : 0.09;
+  c.itens = c.itens || {};
+  for (const sku of Object.keys(c.itens)) {
+    const it = c.itens[sku];
+    if (!Array.isArray(it.custos)) {
+      // migra formato antigo { custo, imposto } -> histórico único desde sempre
+      it.custos = [{ desde: '1970-01-01', ate: null, custo: it.custo != null ? it.custo : 0, custoExtra: it.custoExtra != null ? it.custoExtra : 0 }];
+    }
+    delete it.custo; delete it.custoExtra;
+    it.nome = it.nome || '';
+    it.ean = it.ean || '';
+  }
+  return c;
+}
+let costs = normalizeCosts(readJSON(COSTS_FILE, { taxaPadrao: 0.09, itens: {} }));
 
 // Em hospedagem o disco é temporário: se não há token salvo mas existe
 // ML_REFRESH_TOKEN nas variáveis de ambiente, restaura a conexão a partir dele.
@@ -200,8 +219,8 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
   const sellerId = me.id;
   const orders = await mlFetchOrders(sellerId, fromISO, toISO);
 
-  let fat = 0, comissao = 0, freteVendedor = 0;
-  const bySku = {}; // sku -> { nome, un, fat, comissao }
+  let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
+  const bySku = {}; // sku -> { nome, un, fat, comissao, custo, imposto }
 
   for (const o of orders) {
     for (const it of (o.order_items || [])) {
@@ -209,14 +228,18 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
       const unit = it.unit_price || 0;
       const receita = unit * qty;
       const fee = (it.sale_fee || 0) * qty; // comissão por unidade * qtd
-      fat += receita;
-      comissao += fee;
       const sku = (it.item && (it.item.seller_sku || it.item.seller_custom_field)) || (it.item && it.item.id) || 'SEM_SKU';
       const nome = (it.item && it.item.title) || sku;
-      if (!bySku[sku]) bySku[sku] = { nome, sku, un: 0, fat: 0, comissao: 0 };
+      const cf = costFor(sku, o.date_created);            // custo vigente na data da venda
+      const custoItem = (cf.custo + cf.custoExtra) * qty;
+      const impItem = receita * cf.imposto;
+      fat += receita; comissao += fee; custoProdutos += custoItem; imposto += impItem;
+      if (!bySku[sku]) bySku[sku] = { nome, sku, un: 0, fat: 0, comissao: 0, custo: 0, imposto: 0 };
       bySku[sku].un += qty;
       bySku[sku].fat += receita;
       bySku[sku].comissao += fee;
+      bySku[sku].custo += custoItem;
+      bySku[sku].imposto += impItem;
     }
     if (withShipping && o.shipping && o.shipping.id) {
       freteVendedor += await mlShippingSellerCost(o.shipping.id);
@@ -225,21 +248,11 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
 
   const liq = fat - comissao - freteVendedor;
 
-  // Custos e impostos vêm de costs.json
-  let custoProdutos = 0, imposto = 0;
-  const taxaPadrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.09;
   const produtos = [];
   for (const sku of Object.keys(bySku)) {
     const p = bySku[sku];
-    const conf = costs.itens[sku] || {};
-    const custoUnit = conf.custo != null ? conf.custo : 0;
-    const taxa = conf.imposto != null ? conf.imposto : taxaPadrao;
-    const custoTot = custoUnit * p.un;
-    const impTot = p.fat * taxa;
-    custoProdutos += custoTot;
-    imposto += impTot;
     const liqItem = p.fat - p.comissao;
-    const lucro = liqItem - custoTot - impTot;
+    const lucro = liqItem - p.custo - p.imposto;
     const mpa = p.fat ? (lucro / p.fat) * 100 : 0;
     produtos.push([p.nome, sku, p.un, round2(p.fat), round2(lucro), round2(lucro), round2(mpa), null]);
   }
@@ -266,6 +279,42 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true } = {}) {
 
 const round2 = (v) => Math.round(v * 100) / 100;
 
+// Data de hoje em ISO curto (YYYY-MM-DD), fuso local
+const todayISO = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+
+// Retorna o custo vigente de um SKU na data da venda (histórico)
+function costFor(sku, dateISO) {
+  const conf = costs.itens[sku] || {};
+  const taxa = conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.09);
+  const d = (dateISO || todayISO()).slice(0, 10);
+  let best = null;
+  for (const e of (conf.custos || [])) {
+    if (e.desde <= d && (!e.ate || e.ate >= d)) { if (!best || e.desde > best.desde) best = e; }
+  }
+  return { custo: best ? best.custo : 0, custoExtra: best ? best.custoExtra : 0, imposto: taxa, nome: conf.nome || '' };
+}
+
+// Cria/atualiza um produto. modo: 'todas' | 'novas' | 'periodo'
+function upsertProduct(b) {
+  const sku = String(b.sku || '').trim();
+  if (!sku) return;
+  const it = costs.itens[sku] || (costs.itens[sku] = { nome: '', ean: '', custos: [] });
+  if (b.nome != null && b.nome !== '') it.nome = String(b.nome);
+  if (b.ean != null && b.ean !== '') it.ean = String(b.ean);
+  if (b.imposto != null && b.imposto !== '') it.imposto = Number(b.imposto);
+  const custo = Number(b.custo) || 0;
+  const custoExtra = Number(b.custoExtra) || 0;
+  const modo = b.modo || 'todas';
+  if (modo === 'todas' || !it.custos || it.custos.length === 0) {
+    it.custos = [{ desde: '1970-01-01', ate: null, custo, custoExtra }];          // vale para todas as vendas
+  } else if (modo === 'periodo' && b.desde) {
+    it.custos.push({ desde: b.desde, ate: b.ate || null, custo, custoExtra });      // período específico
+  } else {
+    it.custos.push({ desde: todayISO(), ate: null, custo, custoExtra });            // só vendas novas a partir de hoje
+  }
+  it.custos.sort((a, z) => (a.desde < z.desde ? -1 : 1));
+}
+
 // Monta o objeto detalhado de UM pedido (usado por mlListSales e demoSales)
 // itens: [{ titulo, sku, qtd, unit, total, precoUnit, liquido, imposto, custo, custoExtra, lucro, margem, comissao }]
 // resumo: totais do pedido para a área expansível (estilo Gestor Seller)
@@ -276,20 +325,21 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     const tp = it.unit * it.qtd;
     const share = tp / totalProduto;
     const fVend = freteVend * share, desc = descontos * share, fComp = freteComp * share;
-    const conf = costs.itens[it.sku] || {};
-    const taxa = conf.imposto != null ? conf.imposto : taxaPadrao;
-    const custoUnit = conf.custo != null ? conf.custo : 0;
-    const imposto = tp * taxa, custo = custoUnit * it.qtd;
+    const cf = costFor(it.sku, data);                     // custo vigente na data da venda (histórico)
+    const taxa = cf.imposto;
+    const imposto = tp * taxa;
+    const custo = cf.custo * it.qtd;
+    const custoExtra = cf.custoExtra * it.qtd;
     // Cupom/desconto é bancado pelo vendedor => reduz o líquido (é custo, não bônus)
     const liquido = tp - it.comissao - fVend - desc;      // líquido do marketplace
-    const lucro = liquido - imposto - custo;
+    const lucro = liquido - imposto - custo - custoExtra;
     const totalExib = tp + fComp;                          // total pago pelo comprador
     const margem = totalExib ? (lucro / totalExib) * 100 : 0;
     return {
       titulo: it.titulo, sku: it.sku, qtd: it.qtd, img: it.img || '',
       precoUnit: round2(it.unit), total: round2(totalExib),
       liquido: round2(liquido), imposto: round2(imposto),
-      custo: round2(custo), custoExtra: 0,
+      custo: round2(custo), custoExtra: round2(custoExtra),
       lucro: round2(lucro), margem: round2(margem), comissao: round2(it.comissao),
       freteVend: round2(fVend), freteComp: round2(fComp), descontos: round2(desc),
     };
@@ -303,7 +353,7 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     resumo: {
       totalProduto: round2(totalProduto), total: round2(totalProduto + freteComp),
       freteVend: round2(freteVend), freteComp: round2(freteComp), descontos: round2(descontos),
-      comissao: round2(comissaoTot), imposto: round2(soma('imposto')), custo: round2(soma('custo')),
+      comissao: round2(comissaoTot), imposto: round2(soma('imposto')), custo: round2(soma('custo')), custoExtra: round2(soma('custoExtra')),
       liquido: round2(soma('liquido')), lucro: round2(soma('lucro')),
     },
   };
@@ -502,11 +552,64 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/costs' && req.method === 'GET') return sendJSON(res, 200, costs);
     if (p === '/api/costs' && req.method === 'POST') {
       const b = await readBody(req);
-      if (b && b.itens) {
-        costs = { taxaPadrao: b.taxaPadrao != null ? b.taxaPadrao : costs.taxaPadrao, itens: b.itens };
-        writeJSON(COSTS_FILE, costs);
-      }
+      if (b && b.taxaPadrao != null) { costs.taxaPadrao = b.taxaPadrao; writeJSON(COSTS_FILE, costs); }
       return sendJSON(res, 200, { ok: true });
+    }
+    // ===== Produtos (cadastro + custos com histórico por data) =====
+    if (p === '/api/products' && req.method === 'GET') {
+      const hoje = todayISO();
+      const itens = Object.keys(costs.itens).map((sku) => {
+        const conf = costs.itens[sku];
+        const cf = costFor(sku, hoje);
+        return {
+          sku, nome: conf.nome || '', ean: conf.ean || '',
+          imposto: conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.09),
+          custo: cf.custo, custoExtra: cf.custoExtra, versoes: (conf.custos || []).length,
+        };
+      });
+      return sendJSON(res, 200, { taxaPadrao: costs.taxaPadrao, itens });
+    }
+    if (p === '/api/products' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.op === 'delete') { delete costs.itens[String(b.sku || '').trim()]; writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true }); }
+      if (b.op === 'save') { upsertProduct(b); writeJSON(COSTS_FILE, costs); return sendJSON(res, 200, { ok: true }); }
+      return sendJSON(res, 400, { error: 'op inválida' });
+    }
+    if (p === '/api/products/export' || p === '/api/products/template') {
+      const tpl = p.endsWith('template');
+      const linhas = ['sku;nome;ean;imposto;custo;custo_extra'];
+      if (tpl) {
+        linhas.push('SKU-EXEMPLO;Nome do produto exemplo;7891234567890;9;22,50;0,50');
+      } else {
+        const hoje = todayISO();
+        for (const sku of Object.keys(costs.itens)) {
+          const conf = costs.itens[sku]; const cf = costFor(sku, hoje);
+          const imp = ((conf.imposto != null ? conf.imposto : costs.taxaPadrao) * 100);
+          linhas.push([sku, (conf.nome || '').replace(/;/g, ','), conf.ean || '', String(imp).replace('.', ','), String(cf.custo).replace('.', ','), String(cf.custoExtra).replace('.', ',')].join(';'));
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${tpl ? 'modelo-produtos' : 'meus-produtos'}.csv"` });
+      return res.end('﻿' + linhas.join('\r\n'));
+    }
+    if (p === '/api/products/import' && req.method === 'POST') {
+      const b = await readBody(req);
+      const modo = b.modo || 'novas';
+      const rows = String(b.csv || '').split(/\r?\n/).filter((l) => l.trim());
+      const num = (v) => Number(String(v == null ? '' : v).replace(',', '.').trim());
+      let n = 0;
+      for (const line of rows) {
+        const c = line.split(';');
+        if ((c[0] || '').trim().toLowerCase() === 'sku') continue;
+        const sku = (c[0] || '').trim(); if (!sku) continue;
+        upsertProduct({
+          sku, nome: (c[1] || '').trim(), ean: (c[2] || '').trim(),
+          imposto: (c[3] != null && c[3] !== '') ? num(c[3]) / 100 : null,
+          custo: num(c[4] || 0), custoExtra: num(c[5] || 0), modo,
+        });
+        n++;
+      }
+      writeJSON(COSTS_FILE, costs);
+      return sendJSON(res, 200, { ok: true, importados: n });
     }
     if (p === '/auth/ml') {
       if (!ML.clientId) return sendJSON(res, 400, { error: 'Configure ML_CLIENT_ID no .env' });
