@@ -459,21 +459,35 @@ async function amzListSales(deISO, ateISO) {
 
 // Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard
 async function amzBuildChannel(deISO, ateISO) {
-  const { pedidos, fin } = await amzPedidosDetalhados(deISO, ateISO, false);
+  const { pedidos, fin, itens } = await amzPedidosDetalhados(deISO, ateISO, true);
+  let semTaxa = 0;
 
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   let pedidosSemAssoc = 0, contados = 0;
   const bySku = {};
   let mudouPendentes = limparPendentes();
 
-  for (const o of pedidos) {
-    if (String(o.OrderStatus) === 'Canceled') continue;
-    const f = fin[o.AmazonOrderId];
-    // sem detalhe financeiro ainda (pedido muito recente): usa o total do pedido
+  pedidos.forEach((o, idx) => {
+    if (String(o.OrderStatus) === 'Canceled') return;
+    let f = fin[o.AmazonOrderId];
+    // A Amazon só lança as taxas alguns dias depois. Enquanto isso, usamos os itens
+    // do pedido para aplicar custo e imposto (que são nossos) e marcamos a taxa como
+    // pendente — melhor do que mostrar lucro cheio, sem taxa nenhuma.
     if (!f) {
-      fat += Number(((o.OrderTotal || {}).Amount) || 0);
-      contados++;
-      continue;
+      const lista = itens[idx] || [];
+      if (!lista.length) {
+        fat += Number(((o.OrderTotal || {}).Amount) || 0);
+        contados++; semTaxa++;
+        return;
+      }
+      semTaxa++;
+      f = { itens: {} };
+      for (const it of lista) {
+        const sku = it.SellerSKU || '';
+        const linha = f.itens[sku] || (f.itens[sku] = { qtd: 0, receita: 0, imposto: 0, frete: 0, taxas: 0 });
+        linha.qtd += it.QuantityOrdered || 0;
+        linha.receita += Number(((it.ItemPrice || {}).Amount) || 0);
+      }
     }
     let semAssoc = false;
     for (const sku of Object.keys(f.itens)) {
@@ -481,7 +495,7 @@ async function amzBuildChannel(deISO, ateISO) {
       semAssoc = true;
       if (registrarPendente(sku, 'SKU ' + sku + ' (Amazon)', 'amz', o.PurchaseDate)) mudouPendentes = true;
     }
-    if (semAssoc) { pedidosSemAssoc++; continue; }
+    if (semAssoc) { pedidosSemAssoc++; return; }
     contados++;
     for (const skuBruto of Object.keys(f.itens)) {
       const linha = f.itens[skuBruto];
@@ -497,7 +511,7 @@ async function amzBuildChannel(deISO, ateISO) {
       b.un += linha.qtd; b.fat += linha.receita + linha.frete;
       b.comissao += -linha.taxas; b.custo += custoItem; b.imposto += impostoItem;
     }
-  }
+  });
 
   if (mudouPendentes) writeJSON(COSTS_FILE, costs);
 
@@ -507,10 +521,13 @@ async function amzBuildChannel(deISO, ateISO) {
     nome: 'Amazon', cor: '#ff9900',
     fat: round2(fat), liq: round2(liq), lucroBruto: round2(lb),
     ads: 0, lucro: round2(lb), pedidos: contados, semAssoc: pedidosSemAssoc,
+    taxasPendentes: semTaxa,
   };
+  const taxas = [['Comissão e taxas Amazon', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]];
+  if (semTaxa) taxas.push([`⏳ ${semTaxa} pedido${semTaxa > 1 ? 's' : ''} com taxa ainda não lançada pela Amazon`, 0]);
   const dreDetail = {
     fat: round2(fat),
-    taxas: [['Comissão e taxas Amazon', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]],
+    taxas,
     liq: round2(liq),
     custos: [['Custo dos produtos', -round2(custoProdutos)], ['Impostos', -round2(imposto)]],
     lb: round2(lb),
