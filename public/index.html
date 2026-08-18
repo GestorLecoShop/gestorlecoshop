@@ -123,6 +123,8 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .ship.envios{background:rgba(255,230,0,.13);color:#ffe600;font-weight:700;letter-spacing:.2px}
 .ship.outro{background:var(--surface2);color:var(--muted);border:1px solid var(--line);font-weight:700}
 .ship.alerta{background:rgba(251,113,133,.16);color:var(--rose);font-weight:700;letter-spacing:.2px}
+.ship.fba{background:rgba(255,153,0,.18);color:#ff9900;letter-spacing:.8px}
+.ship.dba{background:rgba(56,189,248,.16);color:var(--blue);letter-spacing:.8px}
 .pack{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid rgba(34,197,94,.55);color:var(--brand);background:rgba(34,197,94,.08);white-space:nowrap}
 .pack svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
 .ord-tbl th{font-size:10px;padding:10px 12px 6px}
@@ -515,7 +517,7 @@ async function loadSales(){
   document.getElementById('periodLabel').textContent=pr.label;
   document.getElementById('content').innerHTML='<div class="loading">Buscando vendas…</div>';
   try{
-    const canal = CONTAS_ML.includes(state.channel) ? '&canal='+state.channel : '';
+    const canal = (state.channel && state.channel!=='all') ? '&canal='+state.channel : '';
     const r=await fetch(`/api/sales?from=${encodeURIComponent(pr.from)}&to=${encodeURIComponent(pr.to)}${canal}`);
     const j=await r.json(); SALES=j.sales||[];
     renderSales(j.demo, j.error);
@@ -539,6 +541,9 @@ const STATUS_PT={paid:'Pago',shipped:'Enviado',delivered:'Entregue',cancelled:'C
 function seloEnvio(envio){
   if(envio==='fulfillment') return `<span class="ship full" title="Mercado Envios Full — estoque no ML">${IC_RAIO}FULL</span>`;
   if(envio==='self_service') return `<span class="ship flex" title="Mercado Envios Flex — entrega no mesmo dia">${IC_CAMINHAO}FLEX</span>`;
+  if(envio==='fba') return `<span class="ship fba" title="Fulfillment by Amazon — estoque na Amazon">${IC_RAIO}FBA</span>`;
+  if(envio==='dba') return `<span class="ship dba" title="Delivery by Amazon — a Amazon coleta e entrega">${IC_CAMINHAO}DBA</span>`;
+  if(envio==='proprio') return `<span class="ship outro" title="Você mesmo envia">${IC_CAMINHAO}Envio próprio</span>`;
   const nome=ENVIO_PT[envio];
   if(nome) return `<span class="ship envios" title="Mercado Envios · ${nome}">${nome}</span>`;
   return '<span class="ship outro">Mercado Envios</span>';
