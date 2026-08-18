@@ -1390,6 +1390,18 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, { ok: false, erro: String(e.message || e) });
       }
     }
+    // Diagnóstico da senha do painel. Nunca devolve a senha, só se ela chegou.
+    if (p === '/api/diag/auth') {
+      const v = ENV.APP_PASSWORD;
+      return sendJSON(res, 200, {
+        definida: !!v,
+        tamanho: typeof v === 'string' ? v.length : 0,
+        tipo: typeof v,
+        veioDoAmbiente: !!process.env.APP_PASSWORD,
+        chavesParecidas: Object.keys(process.env).filter((k) => /PASS|SENHA|APP_/i.test(k)),
+      });
+    }
+
     // IP de saída deste servidor — a Shopee exige IPs individuais na whitelist.
     // Consulta alguns serviços de eco para ver de qual endereço saímos de fato.
     if (p === '/api/meu-ip') {
