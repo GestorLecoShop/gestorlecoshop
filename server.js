@@ -255,6 +255,196 @@ async function mlFetchOrders(sellerId, fromISO, toISO, conta = 'ml') {
   return orders;
 }
 
+// ================= AMAZON (Selling Partner API) =================
+// Desde out/2023 a Amazon não exige mais AWS IAM nem assinatura SigV4: basta o
+// token do Login with Amazon (LWA). Guardamos as credenciais no disco persistente.
+const AMZ_FILE = path.join(DATA_DIR, 'amazon.json');
+const AMZ_HOSTS = {
+  na: 'https://sellingpartnerapi-na.amazon.com',   // inclui o Brasil
+  eu: 'https://sellingpartnerapi-eu.amazon.com',
+  fe: 'https://sellingpartnerapi-fe.amazon.com',
+};
+const AMZ_MERCADO_BR = 'A2Q3Y263D00KWC';
+let amz = readJSON(AMZ_FILE, {});
+amz = { clientId: '', clientSecret: '', refreshToken: '', marketplaceId: AMZ_MERCADO_BR, regiao: 'na', ...amz };
+const amzConectada = () => !!(amz.clientId && amz.clientSecret && amz.refreshToken);
+const amzSalvar = () => writeJSON(AMZ_FILE, amz);
+
+let amzToken = { valor: '', expiraEm: 0 };
+async function amzAccessToken() {
+  if (amzToken.valor && Date.now() < amzToken.expiraEm - 60000) return amzToken.valor;
+  const { status, json } = await request('POST', 'https://api.amazon.com/auth/o2/token', {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: {
+      grant_type: 'refresh_token',
+      refresh_token: amz.refreshToken,
+      client_id: amz.clientId,
+      client_secret: amz.clientSecret,
+    },
+  });
+  if (status !== 200 || !json.access_token) {
+    throw new Error('Amazon: não consegui renovar o acesso — ' + (json.error_description || json.error || ('HTTP ' + status)));
+  }
+  amzToken = { valor: json.access_token, expiraEm: Date.now() + (json.expires_in || 3600) * 1000 };
+  return amzToken.valor;
+}
+
+const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Chamada à SP-API já com token, repetindo quando a Amazon pede para desacelerar (429)
+async function amzApi(caminho, tentativa = 0) {
+  const token = await amzAccessToken();
+  const host = AMZ_HOSTS[amz.regiao] || AMZ_HOSTS.na;
+  const { status, json } = await request('GET', host + caminho, {
+    headers: { 'x-amz-access-token': token, 'Accept': 'application/json' },
+  });
+  if (status === 429 && tentativa < 5) { await esperar(1500 * (tentativa + 1)); return amzApi(caminho, tentativa + 1); }
+  if (status >= 400) {
+    const e = (json && json.errors && json.errors[0]) || {};
+    throw new Error('Amazon ' + status + ': ' + (e.message || e.code || JSON.stringify(json).slice(0, 160)));
+  }
+  return json || {};
+}
+
+// Pedidos do período (paginado por NextToken)
+async function amzPedidos(deISO, ateISO) {
+  const out = [];
+  let proximo = '';
+  for (let i = 0; i < 60; i++) {
+    const q = new URLSearchParams({ MarketplaceIds: amz.marketplaceId });
+    if (proximo) q.set('NextToken', proximo);
+    else { q.set('CreatedAfter', deISO); q.set('CreatedBefore', ateISO); q.set('MaxResultsPerPage', '100'); }
+    const p = (await amzApi('/orders/v0/orders?' + q.toString())).payload || {};
+    out.push(...(p.Orders || []));
+    proximo = p.NextToken || '';
+    if (!proximo) break;
+    await esperar(1200);   // getOrders é limitado; não vale forçar
+  }
+  return out;
+}
+
+// Taxas e valores por pedido: um único pedido de eventos financeiros do período,
+// bem mais barato que consultar pedido a pedido.
+async function amzFinanceiro(deISO, ateISO) {
+  const porPedido = {};
+  let proximo = '';
+  for (let i = 0; i < 60; i++) {
+    const q = new URLSearchParams({ MaxResultsPerPage: '100' });
+    if (proximo) q.set('NextToken', proximo);
+    else { q.set('PostedAfter', deISO); q.set('PostedBefore', ateISO); }
+    let j;
+    try { j = await amzApi('/finances/v0/financialEvents?' + q.toString()); }
+    catch { break; }   // sem financeiro o painel ainda mostra o faturamento
+    const ev = ((j.payload || {}).FinancialEvents) || {};
+    for (const s of (ev.ShipmentEventList || [])) {
+      const id = s.AmazonOrderId;
+      if (!id) continue;
+      const alvo = porPedido[id] || (porPedido[id] = { comissao: 0, fba: 0, outras: 0, itens: {} });
+      for (const it of (s.ShipmentItemList || [])) {
+        const sku = it.SellerSKU || '';
+        const linha = alvo.itens[sku] || (alvo.itens[sku] = { qtd: 0, receita: 0, imposto: 0, frete: 0, taxas: 0 });
+        linha.qtd += it.QuantityShipped || 0;
+        for (const c of (it.ItemChargeList || [])) {
+          const v = ((c.ChargeAmount || {}).CurrencyAmount) || 0;
+          if (c.ChargeType === 'Principal') linha.receita += v;
+          else if (c.ChargeType === 'Tax') linha.imposto += v;
+          else if (String(c.ChargeType || '').includes('Shipping')) linha.frete += v;
+          else linha.receita += v;
+        }
+        for (const f of (it.ItemFeeList || [])) {
+          const v = ((f.FeeAmount || {}).CurrencyAmount) || 0;   // vem negativo
+          linha.taxas += v;
+          if (f.FeeType === 'Commission') alvo.comissao += v;
+          else if (String(f.FeeType || '').startsWith('FBA')) alvo.fba += v;
+          else alvo.outras += v;
+        }
+      }
+    }
+    proximo = ev.NextToken || (j.payload || {}).NextToken || '';
+    if (!proximo) break;
+    await esperar(600);
+  }
+  return porPedido;
+}
+
+// Nome da loja, só para identificar a conta na tela
+async function amzLoja() {
+  try {
+    const j = await amzApi('/sellers/v1/marketplaceParticipations');
+    const lista = (j.payload || []).map((x) => (x.marketplace || {}));
+    const m = lista.find((x) => x.id === amz.marketplaceId) || lista[0] || {};
+    return m.name || 'Amazon';
+  } catch { return 'Amazon'; }
+}
+
+// Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard
+async function amzBuildChannel(deISO, ateISO) {
+  const pedidos = await amzPedidos(deISO, ateISO);
+  const fin = await amzFinanceiro(deISO, ateISO);
+
+  let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
+  let pedidosSemAssoc = 0, contados = 0;
+  const bySku = {};
+  let mudouPendentes = limparPendentes();
+
+  for (const o of pedidos) {
+    if (String(o.OrderStatus) === 'Canceled') continue;
+    const f = fin[o.AmazonOrderId];
+    // sem detalhe financeiro ainda (pedido muito recente): usa o total do pedido
+    if (!f) {
+      fat += Number(((o.OrderTotal || {}).Amount) || 0);
+      contados++;
+      continue;
+    }
+    let semAssoc = false;
+    for (const sku of Object.keys(f.itens)) {
+      if (temAssociacao(sku)) continue;
+      semAssoc = true;
+      if (registrarPendente(sku, 'SKU ' + sku + ' (Amazon)', 'amz', o.PurchaseDate)) mudouPendentes = true;
+    }
+    if (semAssoc) { pedidosSemAssoc++; continue; }
+    contados++;
+    for (const skuBruto of Object.keys(f.itens)) {
+      const linha = f.itens[skuBruto];
+      const sku = resolverSku(skuBruto) || 'SEM_SKU';
+      const cf = costFor(sku, o.PurchaseDate);
+      const custoItem = (cf.custo + cf.custoExtra) * linha.qtd;
+      const impostoItem = linha.receita * cf.imposto;
+      fat += linha.receita + linha.frete;
+      comissao += -linha.taxas;                  // as taxas vêm negativas
+      custoProdutos += custoItem;
+      imposto += impostoItem;
+      const b = bySku[sku] || (bySku[sku] = { nome: cf.nome || sku, un: 0, fat: 0, comissao: 0, custo: 0, imposto: 0 });
+      b.un += linha.qtd; b.fat += linha.receita + linha.frete;
+      b.comissao += -linha.taxas; b.custo += custoItem; b.imposto += impostoItem;
+    }
+  }
+
+  if (mudouPendentes) writeJSON(COSTS_FILE, costs);
+
+  const liq = fat - comissao - freteVendedor;
+  const lb = liq - custoProdutos - imposto;
+  const channel = {
+    nome: 'Amazon', cor: '#ff9900',
+    fat: round2(fat), liq: round2(liq), lucroBruto: round2(lb),
+    ads: 0, lucro: round2(lb), pedidos: contados, semAssoc: pedidosSemAssoc,
+  };
+  const dreDetail = {
+    fat: round2(fat),
+    taxas: [['Comissão e taxas Amazon', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]],
+    liq: round2(liq),
+    custos: [['Custo dos produtos', -round2(custoProdutos)], ['Impostos', -round2(imposto)]],
+    lb: round2(lb),
+  };
+  const produtos = Object.keys(bySku).map((sku) => {
+    const b = bySku[sku];
+    const lucro = b.fat - b.comissao - b.custo - b.imposto;
+    return [b.nome, sku, b.un, round2(b.fat), round2(lucro), round2(lucro), round2(b.fat ? (lucro / b.fat) * 100 : 0), null];
+  }).sort((a, z) => z[3] - a[3]);
+
+  return { channel, dreDetail, produtos };
+}
+
 // Roda várias tarefas ao mesmo tempo, com limite (o ML recusa rajadas grandes)
 async function emLotes(itens, limite, tarefa) {
   const out = new Array(itens.length);
@@ -416,6 +606,21 @@ function registrarPendentes(orders, conta) {
   return mudou;
 }
 const totalPendentes = () => Object.keys(costs.pendentes).length;
+
+// Anota um anúncio pendente vindo de canais que não são o Mercado Livre (ex.: Amazon)
+function registrarPendente(chave, titulo, canal, data) {
+  if (!chave || temAssociacao(chave)) return false;
+  const a = costs.pendentes[chave] || {};
+  const novo = {
+    titulo: titulo || a.titulo || chave,
+    anuncioId: a.anuncioId || '',
+    canal: canal || a.canal || 'amz',
+    ultima: (data || '') > (a.ultima || '') ? (data || '') : (a.ultima || data || ''),
+  };
+  if (JSON.stringify(a) === JSON.stringify(novo)) return false;
+  costs.pendentes[chave] = novo;
+  return true;
+}
 
 // Guarda a foto do anúncio no SKU correspondente (usada na tela de associação)
 function guardarFotos(orders, thumbs) {
@@ -668,9 +873,26 @@ async function buildDashboard({ from, to }) {
     }
   }
 
+  // Amazon (Selling Partner API)
+  if (amzConectada()) {
+    try {
+      const built = await amzBuildChannel(from, to);
+      channels.amz = built.channel;
+      dreDetail.amz = built.dreDetail;
+      produtosPorCanal.amz = built.produtos;
+      status.amz = 'connected';
+      algumConectado = true;
+    } catch (e) {
+      status.amz = 'error';
+      status.amzError = String(e.message || e);
+    }
+  } else {
+    status.amz = 'disconnected';
+  }
+
   // canais futuros como placeholders
   const placeholders = {
-    amz: { nome: 'Amazon', cor: '#ff9900' }, shp: { nome: 'Shopee', cor: '#ee4d2d' },
+    shp: { nome: 'Shopee', cor: '#ee4d2d' },
     mag: { nome: 'Magalu', cor: '#0086ff' }, tik: { nome: 'TikTok Shop', cor: '#69c9d0' },
     loja: { nome: 'Loja própria', cor: '#a78bfa' },
   };
@@ -764,6 +986,47 @@ const server = http.createServer(async (req, res) => {
       if (b && b.taxaPadrao != null) { costs.taxaPadrao = b.taxaPadrao; writeJSON(COSTS_FILE, costs); }
       return sendJSON(res, 200, { ok: true });
     }
+    // ===== Amazon: credenciais e teste de conexão =====
+    if (p === '/api/amazon' && req.method === 'GET') {
+      return sendJSON(res, 200, {
+        conectada: amzConectada(),
+        clientId: amz.clientId || '',
+        temSecret: !!amz.clientSecret,
+        temRefresh: !!amz.refreshToken,
+        marketplaceId: amz.marketplaceId || AMZ_MERCADO_BR,
+        regiao: amz.regiao || 'na',
+        loja: amz.loja || '',
+      });
+    }
+    if (p === '/api/amazon' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.clientId != null) amz.clientId = String(b.clientId).trim();
+      if (b.clientSecret) amz.clientSecret = String(b.clientSecret).trim();
+      if (b.refreshToken) amz.refreshToken = String(b.refreshToken).trim();
+      if (b.marketplaceId) amz.marketplaceId = String(b.marketplaceId).trim();
+      if (b.regiao) amz.regiao = String(b.regiao).trim();
+      amzToken = { valor: '', expiraEm: 0 };      // força renovar com as novas chaves
+      amzSalvar();
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p === '/api/amazon/testar' && req.method === 'POST') {
+      if (!amzConectada()) return sendJSON(res, 200, { ok: false, erro: 'Preencha as três credenciais primeiro.' });
+      try {
+        amzToken = { valor: '', expiraEm: 0 };
+        const loja = await amzLoja();
+        amz.loja = loja; amzSalvar();
+        return sendJSON(res, 200, { ok: true, loja });
+      } catch (e) {
+        return sendJSON(res, 200, { ok: false, erro: String(e.message || e) });
+      }
+    }
+    if (p === '/api/amazon/desconectar' && req.method === 'POST') {
+      amz = { clientId: '', clientSecret: '', refreshToken: '', marketplaceId: AMZ_MERCADO_BR, regiao: 'na' };
+      amzToken = { valor: '', expiraEm: 0 };
+      amzSalvar();
+      return sendJSON(res, 200, { ok: true });
+    }
+
     // ===== Produtos (cadastro + custos com histórico por data) =====
     if (p === '/api/products' && req.method === 'GET') {
       const hoje = todayISO();
