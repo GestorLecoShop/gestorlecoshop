@@ -476,7 +476,7 @@ async function loadSales(){
     carregarPendentes();
   }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
 }
-const ENVIO_PT={fulfillment:'FULL',self_service:'Flex',cross_docking:'Coleta',drop_off:'Agência',xd_drop_off:'Correios',me2:'Mercado Envios',custom:'Combinado'};
+const ENVIO_PT={fulfillment:'FULL',self_service:'Flex',cross_docking:'Coleta',drop_off:'Agência',xd_drop_off:'Mercado Envios',me2:'Mercado Envios',custom:'Combinado'};
 const DOT={delivered:'#22c55e',shipped:'#22c55e',paid:'#fbbf24',cancelled:'#fb7185'};
 function fmtFull(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
 function fmtData(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`;}
