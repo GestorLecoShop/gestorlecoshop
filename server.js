@@ -1399,6 +1399,7 @@ const server = http.createServer(async (req, res) => {
         tipo: typeof v,
         veioDoAmbiente: !!process.env.APP_PASSWORD,
         chavesParecidas: Object.keys(process.env).filter((k) => /PASS|SENHA|APP_/i.test(k)),
+        pedidoTrouxeSenha: !!req.headers.authorization,
       });
     }
 
