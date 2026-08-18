@@ -453,6 +453,10 @@ async function amzListSales(deISO, ateISO) {
       const qt = itemsRaw.reduce((s, i) => s + i.qtd, 0) || 1;
       itemsRaw.forEach((i) => { i.unit = totalPedido / qt; });
     }
+    // Sem preço em lugar nenhum (pedido ainda pendente na Amazon): não dá para
+    // medir. Melhor deixar de fora do que mostrar lucro negativo por aplicar
+    // custo sobre receita zero.
+    if (!itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0)) return;
     out.push(buildOrder({
       id: o.AmazonOrderId, data: o.PurchaseDate, dataAprov: o.PurchaseDate,
       status: String(o.OrderStatus || '').toLowerCase() === 'canceled' ? 'cancelled' : 'shipped',
@@ -503,6 +507,8 @@ async function amzBuildChannel(deISO, ateISO) {
         const qt = Object.keys(f.itens).reduce((s, k) => s + f.itens[k].qtd, 0) || 1;
         for (const k of Object.keys(f.itens)) f.itens[k].receita = totalPedido * (f.itens[k].qtd / qt);
       }
+      // sem preço em lugar nenhum: fica de fora até a Amazon liberar os valores
+      if (!Object.keys(f.itens).reduce((s, k) => s + f.itens[k].receita, 0)) return;
     }
     let semAssoc = false;
     for (const sku of Object.keys(f.itens)) {
