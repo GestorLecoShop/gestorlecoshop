@@ -1030,6 +1030,63 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, { ok: false, erro: String(e.message || e) });
       }
     }
+    // Diagnóstico: mostra o que cada endpoint da Amazon devolve, sem expor chaves
+    // nem dados do comprador. Serve para achar o motivo quando algo não vem.
+    if (p === '/api/amazon/diagnostico') {
+      const de = u.searchParams.get('from') || new Date(Date.now() - 7 * 864e5).toISOString();
+      const ate = u.searchParams.get('to') || new Date(Date.now() - 120000).toISOString();
+      const out = { periodo: { de, ate } };
+      try {
+        const j = await amzApi('/orders/v0/orders?' + new URLSearchParams({
+          MarketplaceIds: amz.marketplaceId, CreatedAfter: de, CreatedBefore: ate, MaxResultsPerPage: '20',
+        }).toString());
+        const lista = (j.payload || {}).Orders || [];
+        out.pedidos = { ok: true, total: lista.length };
+        if (lista[0]) {
+          const o = lista[0];
+          out.pedidos.campos = Object.keys(o);
+          out.pedidos.exemplo = {
+            AmazonOrderId: o.AmazonOrderId, PurchaseDate: o.PurchaseDate, OrderStatus: o.OrderStatus,
+            FulfillmentChannel: o.FulfillmentChannel, ShipmentServiceLevelCategory: o.ShipmentServiceLevelCategory,
+            ShippingAddress: undefined, OrderType: o.OrderType, NumberOfItemsShipped: o.NumberOfItemsShipped,
+            NumberOfItemsUnshipped: o.NumberOfItemsUnshipped, IsPremiumOrder: o.IsPremiumOrder,
+            IsBusinessOrder: o.IsBusinessOrder, EasyShipShipmentStatus: o.EasyShipShipmentStatus,
+            SupplySourceId: o.SupplySourceId, FulfillmentInstruction: o.FulfillmentInstruction,
+            OrderTotal: o.OrderTotal, SalesChannel: o.SalesChannel,
+          };
+          // itens do primeiro pedido (para saber se temos SKU e título)
+          try {
+            const it = await amzApi('/orders/v0/orders/' + o.AmazonOrderId + '/orderItems');
+            const itens = ((it.payload || {}).OrderItems) || [];
+            out.itens = { ok: true, total: itens.length, campos: itens[0] ? Object.keys(itens[0]) : [] };
+          } catch (e) { out.itens = { ok: false, erro: String(e.message || e) }; }
+        }
+      } catch (e) { out.pedidos = { ok: false, erro: String(e.message || e) }; }
+
+      try {
+        const j = await amzApi('/finances/v0/financialEvents?' + new URLSearchParams({
+          PostedAfter: de, PostedBefore: ate, MaxResultsPerPage: '100',
+        }).toString());
+        const ev = ((j.payload || {}).FinancialEvents) || {};
+        out.financeiro = {
+          ok: true,
+          grupos: Object.keys(ev).filter((k) => Array.isArray(ev[k]) && ev[k].length).map((k) => k + '=' + ev[k].length),
+          envios: (ev.ShipmentEventList || []).length,
+        };
+        const s = (ev.ShipmentEventList || [])[0];
+        if (s) {
+          const item = (s.ShipmentItemList || [])[0] || {};
+          out.financeiro.exemplo = {
+            AmazonOrderId: s.AmazonOrderId, PostedDate: s.PostedDate,
+            SellerSKU: item.SellerSKU,
+            cobrancas: (item.ItemChargeList || []).map((c) => c.ChargeType + '=' + ((c.ChargeAmount || {}).CurrencyAmount)),
+            taxas: (item.ItemFeeList || []).map((f) => f.FeeType + '=' + ((f.FeeAmount || {}).CurrencyAmount)),
+          };
+        }
+      } catch (e) { out.financeiro = { ok: false, erro: String(e.message || e) }; }
+
+      return sendJSON(res, 200, out);
+    }
     if (p === '/api/amazon/desconectar' && req.method === 'POST') {
       amz = { clientId: '', clientSecret: '', refreshToken: '', marketplaceId: AMZ_MERCADO_BR, regiao: 'na' };
       amzToken = { valor: '', expiraEm: 0 };
