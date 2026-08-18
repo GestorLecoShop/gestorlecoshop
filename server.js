@@ -339,7 +339,8 @@ async function amzFinanceiro(deISO, ateISO) {
     for (const s of (ev.ShipmentEventList || [])) {
       const id = s.AmazonOrderId;
       if (!id) continue;
-      const alvo = porPedido[id] || (porPedido[id] = { comissao: 0, fba: 0, outras: 0, itens: {} });
+      const alvo = porPedido[id] || (porPedido[id] = { comissao: 0, fba: 0, outras: 0, data: '', itens: {} });
+      if (s.PostedDate && (!alvo.data || s.PostedDate < alvo.data)) alvo.data = s.PostedDate;
       for (const it of (s.ShipmentItemList || [])) {
         const sku = it.SellerSKU || '';
         const linha = alvo.itens[sku] || (alvo.itens[sku] = { qtd: 0, receita: 0, imposto: 0, frete: 0, taxas: 0 });
@@ -379,8 +380,17 @@ async function amzLoja() {
 
 // Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard
 async function amzBuildChannel(deISO, ateISO) {
-  const pedidos = await amzPedidos(deISO, ateISO);
+  // A lista de pedidos exige a permissão "Inventory and Order Tracking". Se o app
+  // só tiver "Finanças", seguimos apenas com os eventos financeiros — que já trazem
+  // pedido, SKU, quantidade, receita e todas as taxas.
+  let pedidos = [];
+  try { pedidos = await amzPedidos(deISO, ateISO); } catch { pedidos = []; }
   const fin = await amzFinanceiro(deISO, ateISO);
+  if (!pedidos.length) {
+    pedidos = Object.keys(fin).map((id) => ({
+      AmazonOrderId: id, PurchaseDate: fin[id].data || deISO, OrderStatus: 'Shipped',
+    }));
+  }
 
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   let pedidosSemAssoc = 0, contados = 0;
