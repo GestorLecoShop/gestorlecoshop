@@ -239,8 +239,54 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
     <h2>Configurações</h2>
     <div class="mhint">Tudo pela tela — você não precisa editar nenhum arquivo.</div>
     <div class="mtabs">
-      <button class="on" data-t="conexao" onclick="cfgTab('conexao')">Conexão Mercado Livre</button>
+      <button class="on" data-t="conexao" onclick="cfgTab('conexao')">Mercado Livre</button>
+      <button data-t="amazon" onclick="cfgTab('amazon')">Amazon</button>
       <button data-t="custos" onclick="cfgTab('custos')">Custos e Produtos</button>
+    </div>
+
+    <div id="tab-amazon" style="display:none">
+      <div class="mhint">A Amazon usa <b>Login with Amazon</b>. Você cria um app privado no Seller Central
+        (Apps e Serviços → Desenvolver Apps), clica em <b>Authorize app</b> e cola aqui as três chaves.
+        Elas ficam só no seu servidor.</div>
+      <div class="field">
+        <label>LWA Client ID</label>
+        <input id="azClientId" placeholder="amzn1.application-oa2-client....">
+      </div>
+      <div class="field">
+        <label>LWA Client Secret</label>
+        <input id="azSecret" type="password" placeholder="cole a chave secreta do app">
+      </div>
+      <div class="field">
+        <label>Refresh Token (gerado no botão "Authorize app")</label>
+        <input id="azRefresh" type="password" placeholder="Atzr|IwEB....">
+        <div class="tip">É preciso ser o usuário principal da conta do Seller Central para gerar.</div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:180px">
+          <label>Marketplace</label>
+          <select class="sel" id="azMercado" style="width:100%">
+            <option value="A2Q3Y263D00KWC">Brasil (amazon.com.br)</option>
+            <option value="ATVPDKIKX0DER">Estados Unidos</option>
+            <option value="A1AM78C64UM0Y8">México</option>
+            <option value="A2EUQ1WTGCTBG2">Canadá</option>
+          </select>
+        </div>
+        <div class="field" style="flex:1;min-width:180px">
+          <label>Região do endpoint</label>
+          <select class="sel" id="azRegiao" style="width:100%">
+            <option value="na">América (inclui o Brasil)</option>
+            <option value="eu">Europa</option>
+            <option value="fe">Ásia / Oceania</option>
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>Situação</label><div class="tip" id="azEstado" style="margin-top:0">—</div></div>
+      <div class="mrow">
+        <span class="ok-msg" id="azMsg"></span>
+        <button class="btn ghost" onclick="desconectarAmazon()">Desconectar</button>
+        <button class="btn ghost" onclick="testarAmazon()">Testar conexão</button>
+        <button class="btn" onclick="salvarAmazon()">Salvar</button>
+      </div>
     </div>
 
     <div id="tab-conexao">
@@ -700,7 +746,7 @@ function renderConn(){
     return `<div class="row"><span class="dot ${cls}"></span>${label}: <b style="margin-left:auto">${txt}</b></div>`;};
   document.getElementById('connBox').innerHTML=item('ml','Mercado Livre')+item('ldmsc','LDM SC')+item('amz','Amazon')+item('shp','Shopee')+item('mag','Magalu')+item('tik','TikTok');
 }
-const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC'};
+const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC',amz:'Amazon'};
 function renderBanner(){
   const b=document.getElementById('banner'); const s=DATA.status||{};
   const conectadas=CONTAS_ML.filter(c=>s[c]==='connected');
@@ -1010,7 +1056,47 @@ async function doImport(){
 let cfgRedirectUri='';
 const $=id=>document.getElementById(id);
 function cfgTab(t){document.querySelectorAll('.mtabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
-  $('tab-conexao').style.display=t==='conexao'?'':'none';$('tab-custos').style.display=t==='custos'?'':'none';}
+  $('tab-conexao').style.display=t==='conexao'?'':'none';
+  $('tab-amazon').style.display=t==='amazon'?'':'none';
+  $('tab-custos').style.display=t==='custos'?'':'none';
+  if(t==='amazon') carregarAmazon();}
+
+// ===== Amazon (Selling Partner API) =====
+async function carregarAmazon(){
+  try{
+    const a=await(await fetch('/api/amazon')).json();
+    $('azClientId').value=a.clientId||'';
+    $('azSecret').value=a.temSecret?'••••••••':'';
+    $('azRefresh').value=a.temRefresh?'••••••••':'';
+    $('azMercado').value=a.marketplaceId||'A2Q3Y263D00KWC';
+    $('azRegiao').value=a.regiao||'na';
+    $('azEstado').textContent = a.conectada
+      ? ('conectada' + (a.loja?(' — '+a.loja):'') + '. Clique em "Testar conexão" para conferir.')
+      : 'não conectada — preencha as três chaves e salve.';
+    $('azMsg').textContent='';
+  }catch(e){}
+}
+async function salvarAmazon(){
+  const b={ clientId:$('azClientId').value.trim(), marketplaceId:$('azMercado').value, regiao:$('azRegiao').value };
+  const s=$('azSecret').value.trim(), r=$('azRefresh').value.trim();
+  if(s && s!=='••••••••') b.clientSecret=s;
+  if(r && r!=='••••••••') b.refreshToken=r;
+  $('azMsg').textContent='Salvando…';
+  await fetch('/api/amazon',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  $('azMsg').textContent='Salvo.';
+  testarAmazon();
+}
+async function testarAmazon(){
+  $('azMsg').textContent='Testando…';
+  const r=await(await fetch('/api/amazon/testar',{method:'POST'})).json();
+  if(r.ok){ $('azMsg').textContent='Conectado!'; $('azEstado').textContent='conectada — '+(r.loja||'Amazon'); setTimeout(()=>loadDashboard(),600); }
+  else { $('azMsg').textContent=''; $('azEstado').textContent='erro: '+(r.erro||'não consegui conectar'); }
+}
+async function desconectarAmazon(){
+  if(!confirm('Remover as credenciais da Amazon deste painel?')) return;
+  await fetch('/api/amazon/desconectar',{method:'POST'});
+  carregarAmazon(); loadDashboard();
+}
 async function openCfg(tab){
   $('cfgModal').classList.add('open'); cfgTab(tab||'conexao'); $('cfgMsg').textContent='';
   const c=await(await fetch('/api/config')).json();
