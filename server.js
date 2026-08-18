@@ -1390,6 +1390,22 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, { ok: false, erro: String(e.message || e) });
       }
     }
+    // IP de saída deste servidor — a Shopee exige IPs individuais na whitelist.
+    // Consulta alguns serviços de eco para ver de qual endereço saímos de fato.
+    if (p === '/api/meu-ip') {
+      const fontes = ['https://api.ipify.org?format=json', 'https://ifconfig.co/json', 'https://api64.ipify.org?format=json'];
+      const achados = [];
+      for (const f of fontes) {
+        try {
+          const { json } = await request('GET', f, {});
+          const ip = (json && (json.ip || json.IP)) || '';
+          if (ip) achados.push({ fonte: new URL(f).hostname, ip });
+        } catch (e) { achados.push({ fonte: new URL(f).hostname, erro: String(e.message || e).slice(0, 80) }); }
+      }
+      const ips = [...new Set(achados.map((a) => a.ip).filter(Boolean))];
+      return sendJSON(res, 200, { ips, detalhe: achados });
+    }
+
     // ===== Shopee: credenciais, autorização da loja e conexão =====
     if (p === '/api/shopee' && req.method === 'GET') {
       return sendJSON(res, 200, {
