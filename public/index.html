@@ -125,6 +125,7 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .ship.alerta{background:rgba(251,113,133,.16);color:var(--rose);font-weight:700;letter-spacing:.2px}
 .ship.fba{background:rgba(255,153,0,.18);color:#ff9900;letter-spacing:.8px}
 .ship.dba{background:rgba(56,189,248,.16);color:var(--blue);letter-spacing:.8px}
+.ship.shopee{background:rgba(238,77,45,.18);color:#ee4d2d;letter-spacing:.6px}
 .pack{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid rgba(34,197,94,.55);color:var(--brand);background:rgba(34,197,94,.08);white-space:nowrap}
 .pack svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
 .ord-tbl th{font-size:10px;padding:10px 12px 6px}
@@ -243,7 +244,39 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
     <div class="mtabs">
       <button class="on" data-t="conexao" onclick="cfgTab('conexao')">Mercado Livre</button>
       <button data-t="amazon" onclick="cfgTab('amazon')">Amazon</button>
+      <button data-t="shopee" onclick="cfgTab('shopee')">Shopee</button>
       <button data-t="custos" onclick="cfgTab('custos')">Custos e Produtos</button>
+    </div>
+
+    <div id="tab-shopee" style="display:none">
+      <div class="mhint">No <b>Shopee Open Platform</b> (open.shopee.com), crie um app e copie o
+        <b>Partner ID</b> e a <b>Partner Key</b>. Depois clique em Conectar para autorizar sua loja.</div>
+      <div class="field">
+        <label>Partner ID</label>
+        <input id="spPartnerId" placeholder="ex.: 1180000">
+      </div>
+      <div class="field">
+        <label>Partner Key</label>
+        <input id="spPartnerKey" type="password" placeholder="cole a chave do app">
+      </div>
+      <div class="field">
+        <label>Redirect URL — cadastre esta EXATA no seu app da Shopee</label>
+        <div class="copy" id="spRedirect" onclick="copiarRedirectShopee()" title="clique para copiar">—</div>
+        <div class="tip">No console da Shopee: seu app → Configuração → Redirect URL.</div>
+      </div>
+      <div class="field">
+        <label>IPs do servidor — cadastre na IP Whitelist da Shopee (obrigatório)</label>
+        <div class="copy" id="spIps">carregando…</div>
+        <div class="tip">No Render: serviço → Connect → Outbound IPs. A Shopee exige esses IPs liberados.</div>
+      </div>
+      <div class="field"><label>Situação</label><div class="tip" id="spEstado" style="margin-top:0">—</div></div>
+      <div class="mrow">
+        <span class="ok-msg" id="spMsg"></span>
+        <button class="btn ghost" onclick="desconectarShopee()">Desconectar</button>
+        <button class="btn ghost" onclick="testarShopee()">Testar conexão</button>
+        <button class="btn ghost" onclick="salvarShopee()">Salvar chaves</button>
+        <button class="btn" onclick="conectarShopee()">Conectar loja</button>
+      </div>
     </div>
 
     <div id="tab-amazon" style="display:none">
@@ -544,6 +577,8 @@ function seloEnvio(envio){
   if(envio==='fba') return `<span class="ship fba" title="Fulfillment by Amazon — estoque na Amazon">${IC_RAIO}FBA</span>`;
   if(envio==='dba') return `<span class="ship dba" title="Delivery by Amazon — a Amazon coleta e entrega">${IC_CAMINHAO}DBA</span>`;
   if(envio==='proprio') return `<span class="ship outro" title="Você mesmo envia">${IC_CAMINHAO}Envio próprio</span>`;
+  if(envio==='shopee_full') return `<span class="ship shopee" title="Shopee Full — estoque na Shopee">${IC_RAIO}SHOPEE FULL</span>`;
+  if(envio==='shopee_envios') return `<span class="ship shopee" title="Envio pela Shopee">${IC_CAMINHAO}Shopee Envios</span>`;
   const nome=ENVIO_PT[envio];
   if(nome) return `<span class="ship envios" title="Mercado Envios · ${nome}">${nome}</span>`;
   return '<span class="ship outro">Mercado Envios</span>';
@@ -751,7 +786,7 @@ function renderConn(){
     return `<div class="row"><span class="dot ${cls}"></span>${label}: <b style="margin-left:auto">${txt}</b></div>`;};
   document.getElementById('connBox').innerHTML=item('ml','Mercado Livre')+item('ldmsc','LDM SC')+item('amz','Amazon')+item('shp','Shopee')+item('mag','Magalu')+item('tik','TikTok');
 }
-const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC',amz:'Amazon'};
+const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC',amz:'Amazon',shp:'Shopee'};
 function renderBanner(){
   const b=document.getElementById('banner'); const s=DATA.status||{};
   const conectadas=CONTAS_ML.filter(c=>s[c]==='connected');
@@ -1063,8 +1098,54 @@ const $=id=>document.getElementById(id);
 function cfgTab(t){document.querySelectorAll('.mtabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
   $('tab-conexao').style.display=t==='conexao'?'':'none';
   $('tab-amazon').style.display=t==='amazon'?'':'none';
+  $('tab-shopee').style.display=t==='shopee'?'':'none';
   $('tab-custos').style.display=t==='custos'?'':'none';
-  if(t==='amazon') carregarAmazon();}
+  if(t==='amazon') carregarAmazon();
+  if(t==='shopee') carregarShopee();}
+
+// ===== Shopee (Open Platform) =====
+let spRedirectUrl='';
+async function carregarShopee(){
+  try{
+    const s=await(await fetch('/api/shopee')).json();
+    $('spPartnerId').value=s.partnerId||'';
+    $('spPartnerKey').value=s.temKey?'••••••••':'';
+    spRedirectUrl=s.redirect||''; $('spRedirect').textContent=spRedirectUrl||'—';
+    $('spEstado').textContent = s.conectada
+      ? ('loja conectada'+(s.loja?(' — '+s.loja):'')+' (shop_id '+s.shopId+')')
+      : (s.temApp ? 'chaves salvas — falta clicar em "Conectar loja".' : 'preencha Partner ID e Partner Key.');
+    $('spMsg').textContent='';
+  }catch(e){}
+  $('spIps').textContent='veja no Render → Connect → Outbound IPs';
+}
+function copiarRedirectShopee(){
+  navigator.clipboard&&navigator.clipboard.writeText(spRedirectUrl);
+  $('spRedirect').textContent=spRedirectUrl+'  ✓ copiado';
+  setTimeout(()=>$('spRedirect').textContent=spRedirectUrl,1500);
+}
+async function salvarShopee(){
+  const b={ partnerId:$('spPartnerId').value.trim() };
+  const k=$('spPartnerKey').value.trim();
+  if(k && k!=='••••••••') b.partnerKey=k;
+  $('spMsg').textContent='Salvando…';
+  await fetch('/api/shopee',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  $('spMsg').textContent='Salvo.'; carregarShopee();
+}
+async function conectarShopee(){
+  await salvarShopee();
+  location.href='/auth/shopee';
+}
+async function testarShopee(){
+  $('spMsg').textContent='Testando…';
+  const r=await(await fetch('/api/shopee/testar',{method:'POST'})).json();
+  if(r.ok){ $('spMsg').textContent='Conectado!'; $('spEstado').textContent='loja conectada — '+(r.loja||'Shopee'); setTimeout(()=>loadDashboard(),600); }
+  else { $('spMsg').textContent=''; $('spEstado').textContent='erro: '+(r.erro||'não consegui conectar'); }
+}
+async function desconectarShopee(){
+  if(!confirm('Desconectar a loja da Shopee deste painel?')) return;
+  await fetch('/api/shopee/desconectar',{method:'POST'});
+  carregarShopee(); loadDashboard();
+}
 
 // ===== Amazon (Selling Partner API) =====
 async function carregarAmazon(){
