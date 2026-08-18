@@ -126,6 +126,7 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .ship.fba{background:rgba(255,153,0,.18);color:#ff9900;letter-spacing:.8px}
 .ship.dba{background:rgba(56,189,248,.16);color:var(--blue);letter-spacing:.8px}
 .ship.shopee{background:rgba(238,77,45,.18);color:#ee4d2d;letter-spacing:.6px}
+.ship.tiktok{background:rgba(105,201,208,.18);color:#69c9d0;letter-spacing:.6px}
 .pack{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid rgba(34,197,94,.55);color:var(--brand);background:rgba(34,197,94,.08);white-space:nowrap}
 .pack svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
 .ord-tbl th{font-size:10px;padding:10px 12px 6px}
@@ -245,7 +246,28 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
       <button class="on" data-t="conexao" onclick="cfgTab('conexao')">Mercado Livre</button>
       <button data-t="amazon" onclick="cfgTab('amazon')">Amazon</button>
       <button data-t="shopee" onclick="cfgTab('shopee')">Shopee</button>
+      <button data-t="tiktok" onclick="cfgTab('tiktok')">TikTok Shop</button>
       <button data-t="custos" onclick="cfgTab('custos')">Custos e Produtos</button>
+    </div>
+
+    <div id="tab-tiktok" style="display:none">
+      <div class="mhint">No <b>TikTok Shop Partner Center</b>, abra seu app e copie <b>App Key</b>,
+        <b>App Secret</b> e <b>Service ID</b>. Depois clique em Conectar para autorizar a loja.</div>
+      <div class="field"><label>App Key</label><input id="tkKey" placeholder="ex.: 6h1a...."></div>
+      <div class="field"><label>App Secret</label><input id="tkSecret" type="password" placeholder="cole o segredo do app"></div>
+      <div class="field"><label>Service ID</label><input id="tkService" placeholder="ex.: 7412..."></div>
+      <div class="field">
+        <label>Callback URL — cadastre esta EXATA no seu app do TikTok</label>
+        <div class="copy" id="tkRedirect" onclick="copiarRedirectTikTok()" title="clique para copiar">—</div>
+      </div>
+      <div class="field"><label>Situação</label><div class="tip" id="tkEstado" style="margin-top:0">—</div></div>
+      <div class="mrow">
+        <span class="ok-msg" id="tkMsg"></span>
+        <button class="btn ghost" onclick="desconectarTikTok()">Desconectar</button>
+        <button class="btn ghost" onclick="testarTikTok()">Testar conexão</button>
+        <button class="btn ghost" onclick="salvarTikTok()">Salvar chaves</button>
+        <button class="btn" onclick="conectarTikTok()">Conectar loja</button>
+      </div>
     </div>
 
     <div id="tab-shopee" style="display:none">
@@ -579,6 +601,8 @@ function seloEnvio(envio){
   if(envio==='proprio') return `<span class="ship outro" title="Você mesmo envia">${IC_CAMINHAO}Envio próprio</span>`;
   if(envio==='shopee_full') return `<span class="ship shopee" title="Shopee Full — estoque na Shopee">${IC_RAIO}SHOPEE FULL</span>`;
   if(envio==='shopee_envios') return `<span class="ship shopee" title="Envio pela Shopee">${IC_CAMINHAO}Shopee Envios</span>`;
+  if(envio==='tiktok_full') return `<span class="ship tiktok" title="Fulfilled by TikTok — estoque no TikTok">${IC_RAIO}TIKTOK FULL</span>`;
+  if(envio==='tiktok_envios') return `<span class="ship tiktok" title="Envio pelo vendedor">${IC_CAMINHAO}TikTok Envios</span>`;
   const nome=ENVIO_PT[envio];
   if(nome) return `<span class="ship envios" title="Mercado Envios · ${nome}">${nome}</span>`;
   return '<span class="ship outro">Mercado Envios</span>';
@@ -786,7 +810,7 @@ function renderConn(){
     return `<div class="row"><span class="dot ${cls}"></span>${label}: <b style="margin-left:auto">${txt}</b></div>`;};
   document.getElementById('connBox').innerHTML=item('ml','Mercado Livre')+item('ldmsc','LDM SC')+item('amz','Amazon')+item('shp','Shopee')+item('mag','Magalu')+item('tik','TikTok');
 }
-const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC',amz:'Amazon',shp:'Shopee'};
+const NOME_CANAL={ml:'Mercado Livre',ldmsc:'LDM SC',amz:'Amazon',shp:'Shopee',tik:'TikTok Shop'};
 function renderBanner(){
   const b=document.getElementById('banner'); const s=DATA.status||{};
   const conectadas=CONTAS_ML.filter(c=>s[c]==='connected');
@@ -1099,9 +1123,52 @@ function cfgTab(t){document.querySelectorAll('.mtabs button').forEach(b=>b.class
   $('tab-conexao').style.display=t==='conexao'?'':'none';
   $('tab-amazon').style.display=t==='amazon'?'':'none';
   $('tab-shopee').style.display=t==='shopee'?'':'none';
+  $('tab-tiktok').style.display=t==='tiktok'?'':'none';
   $('tab-custos').style.display=t==='custos'?'':'none';
   if(t==='amazon') carregarAmazon();
-  if(t==='shopee') carregarShopee();}
+  if(t==='shopee') carregarShopee();
+  if(t==='tiktok') carregarTikTok();}
+
+// ===== TikTok Shop =====
+let tkRedirectUrl='';
+async function carregarTikTok(){
+  try{
+    const s=await(await fetch('/api/tiktok')).json();
+    $('tkKey').value=s.appKey||'';
+    $('tkSecret').value=s.temSecret?'\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022':'';
+    $('tkService').value=s.serviceId||'';
+    tkRedirectUrl=s.redirect||''; $('tkRedirect').textContent=tkRedirectUrl||'—';
+    $('tkEstado').textContent = s.conectada
+      ? ('loja conectada'+(s.loja?(' — '+s.loja):'')+' (shop '+s.shopId+')')
+      : (s.temApp ? 'chaves salvas — falta clicar em "Conectar loja".' : 'preencha App Key, App Secret e Service ID.');
+    $('tkMsg').textContent='';
+  }catch(e){}
+}
+function copiarRedirectTikTok(){
+  navigator.clipboard&&navigator.clipboard.writeText(tkRedirectUrl);
+  $('tkRedirect').textContent=tkRedirectUrl+'  \u2713 copiado';
+  setTimeout(()=>$('tkRedirect').textContent=tkRedirectUrl,1500);
+}
+async function salvarTikTok(){
+  const b={ appKey:$('tkKey').value.trim(), serviceId:$('tkService').value.trim() };
+  const k=$('tkSecret').value.trim();
+  if(k && k!=='\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022') b.appSecret=k;
+  $('tkMsg').textContent='Salvando…';
+  await fetch('/api/tiktok',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  $('tkMsg').textContent='Salvo.'; carregarTikTok();
+}
+async function conectarTikTok(){ await salvarTikTok(); location.href='/auth/tiktok'; }
+async function testarTikTok(){
+  $('tkMsg').textContent='Testando…';
+  const r=await(await fetch('/api/tiktok/testar',{method:'POST'})).json();
+  if(r.ok){ $('tkMsg').textContent='Conectado!'; $('tkEstado').textContent='loja conectada — '+(r.loja||'TikTok Shop'); setTimeout(()=>loadDashboard(),600); }
+  else { $('tkMsg').textContent=''; $('tkEstado').textContent='erro: '+(r.erro||'nao consegui conectar'); }
+}
+async function desconectarTikTok(){
+  if(!confirm('Desconectar a loja do TikTok Shop deste painel?')) return;
+  await fetch('/api/tiktok/desconectar',{method:'POST'});
+  carregarTikTok(); loadDashboard();
+}
 
 // ===== Shopee (Open Platform) =====
 let spRedirectUrl='';
