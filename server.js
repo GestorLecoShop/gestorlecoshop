@@ -122,7 +122,7 @@ const CONTAS_ML = {
 };
 const ehContaML = (c) => Object.prototype.hasOwnProperty.call(CONTAS_ML, c);
 // Nome do canal para exibir no card da venda (Mercado Livre, LDM SC, Amazon...)
-const NOMES_CANAL = { amz: 'Amazon', shp: 'Shopee' };
+const NOMES_CANAL = { amz: 'Amazon', shp: 'Shopee', tik: 'TikTok Shop' };
 const nomeCanal = (c) => (CONTAS_ML[c] && CONTAS_ML[c].nome) || NOMES_CANAL[c] || 'Mercado Livre';
 
 // Em hospedagem o disco é temporário: se não há token salvo mas existe a variável
@@ -799,6 +799,212 @@ async function shpBuildChannel(deISO, ateISO) {
   };
 }
 
+// ================= TIKTOK SHOP (Partner API) =================
+// Assinatura (conforme o exemplo oficial):
+//   1) pega os parâmetros da query, menos sign e access_token
+//   2) ordena as chaves em ordem alfabética e junta como {chave}{valor}
+//   3) coloca o caminho da API na frente
+//   4) anexa o corpo cru (quando não é multipart)
+//   5) embrulha tudo no app_secret: secret + texto + secret
+//   6) HMAC-SHA256 com o próprio secret, em hexadecimal
+const TTK_FILE = path.join(DATA_DIR, 'tiktok.json');
+const TTK_AUTH_HOST = 'https://auth.tiktok-shops.com';
+const TTK_API_HOST = 'https://open-api.tiktokglobalshop.com';
+let ttk = readJSON(TTK_FILE, {});
+ttk = { appKey: '', appSecret: '', serviceId: '', accessToken: '', refreshToken: '', expiraEm: 0, shopId: '', shopCipher: '', loja: '', ...ttk };
+const ttkTemApp = () => !!(ttk.appKey && ttk.appSecret);
+const ttkConectada = () => !!(ttkTemApp() && ttk.refreshToken && ttk.shopCipher);
+const ttkSalvar = () => writeJSON(TTK_FILE, ttk);
+
+function ttkAssinar(caminho, params, corpo) {
+  const chaves = Object.keys(params).filter((k) => k !== 'sign' && k !== 'access_token').sort();
+  let texto = chaves.map((k) => k + params[k]).join('');
+  texto = caminho + texto;
+  if (corpo) texto += corpo;
+  texto = ttk.appSecret + texto + ttk.appSecret;
+  return crypto.createHmac('sha256', ttk.appSecret).update(texto).digest('hex');
+}
+
+// Link que o vendedor abre para autorizar a loja
+const ttkLinkAutorizacao = () =>
+  'https://services.tiktokshop.com/open/authorize?service_id=' + encodeURIComponent(ttk.serviceId || '');
+
+// Troca o code por tokens (endpoint de auth não é assinado)
+async function ttkTrocarCode(code) {
+  const q = new URLSearchParams({
+    app_key: ttk.appKey, app_secret: ttk.appSecret, auth_code: code, grant_type: 'authorized_code',
+  });
+  const { status, json } = await request('GET', TTK_AUTH_HOST + '/api/v2/token/get?' + q.toString(), {});
+  const d = (json && json.data) || {};
+  if (status !== 200 || !d.access_token) throw new Error('TikTok: ' + ((json && json.message) || ('HTTP ' + status)));
+  ttk.accessToken = d.access_token;
+  ttk.refreshToken = d.refresh_token;
+  ttk.expiraEm = (d.access_token_expire_in ? d.access_token_expire_in * 1000 : Date.now() + 6 * 3600e3);
+  ttkSalvar();
+  return d;
+}
+
+async function ttkRenovar() {
+  const q = new URLSearchParams({
+    app_key: ttk.appKey, app_secret: ttk.appSecret, refresh_token: ttk.refreshToken, grant_type: 'refresh_token',
+  });
+  const { status, json } = await request('GET', TTK_AUTH_HOST + '/api/v2/token/refresh?' + q.toString(), {});
+  const d = (json && json.data) || {};
+  if (status !== 200 || !d.access_token) throw new Error('TikTok: não consegui renovar — ' + ((json && json.message) || ('HTTP ' + status)));
+  ttk.accessToken = d.access_token;
+  if (d.refresh_token) ttk.refreshToken = d.refresh_token;
+  ttk.expiraEm = (d.access_token_expire_in ? d.access_token_expire_in * 1000 : Date.now() + 6 * 3600e3);
+  ttkSalvar();
+  return ttk.accessToken;
+}
+
+async function ttkToken() {
+  if (ttk.accessToken && Date.now() < ttk.expiraEm - 300000) return ttk.accessToken;
+  return ttkRenovar();
+}
+
+async function ttkApi(caminho, params = {}, corpo = null, metodo = 'GET') {
+  await ttkToken();
+  const p = { app_key: ttk.appKey, timestamp: String(Math.floor(Date.now() / 1000)), ...params };
+  if (ttk.shopCipher && !p.shop_cipher && !caminho.includes('/authorization/')) p.shop_cipher = ttk.shopCipher;
+  const body = corpo ? JSON.stringify(corpo) : '';
+  p.sign = ttkAssinar(caminho, p, body);
+  const url = TTK_API_HOST + caminho + '?' + new URLSearchParams(p).toString();
+  const headers = { 'x-tts-access-token': ttk.accessToken, 'Content-Type': 'application/json' };
+  const { status, json } = await request(metodo, url, body ? { headers, body } : { headers });
+  if (status >= 400 || (json && json.code && json.code !== 0)) {
+    throw new Error('TikTok ' + ((json && json.code) || status) + ': ' + (((json && json.message) || '')).slice(0, 180));
+  }
+  return (json && json.data) || {};
+}
+
+// Descobre a loja autorizada e guarda o shop_cipher (obrigatório nas demais chamadas)
+async function ttkDescobrirLoja() {
+  const d = await ttkApi('/authorization/202309/shops');
+  const loja = (d.shops || [])[0];
+  if (!loja) throw new Error('TikTok: nenhuma loja autorizada para este app.');
+  ttk.shopId = String(loja.id || '');
+  ttk.shopCipher = loja.cipher || '';
+  ttk.loja = loja.name || 'TikTok Shop';
+  ttkSalvar();
+  return loja;
+}
+
+// Pedidos do período (a busca já devolve o pedido completo)
+async function ttkPedidos(deISO, ateISO) {
+  const t0 = Math.floor(new Date(deISO).getTime() / 1000);
+  const t1 = Math.floor(new Date(ateISO).getTime() / 1000);
+  const out = [];
+  let token = '';
+  for (let i = 0; i < 60; i++) {
+    const d = await ttkApi('/order/202309/orders/search',
+      { page_size: '50', ...(token ? { page_token: token } : {}) },
+      { create_time_ge: t0, create_time_lt: t1 }, 'POST');
+    out.push(...(d.orders || []));
+    token = d.next_page_token || '';
+    if (!token) break;
+  }
+  return out;
+}
+
+// Taxas reais por pedido (extrato financeiro). Se não vier, seguimos sem elas.
+async function ttkTaxas(ids) {
+  const mapa = {};
+  await emLotes(ids, 4, async (id) => {
+    try {
+      const d = await ttkApi('/finance/202309/orders/' + id + '/statement_transactions');
+      const t = (d.statement_transactions || [])[0] || d;
+      if (t) mapa[id] = t;
+    } catch { /* pedido ainda não liquidado */ }
+  });
+  return mapa;
+}
+
+const ttkEnvio = (o) => (String(o.fulfillment_type || '').includes('TIKTOK') ? 'tiktok_full' : 'tiktok_envios');
+
+// Vendas detalhadas do TikTok Shop
+async function ttkListSales(deISO, ateISO) {
+  const pedidos = await ttkPedidos(deISO, ateISO);
+  if (!pedidos.length) return [];
+  const taxas = await ttkTaxas(pedidos.map((o) => o.id));
+  const out = [];
+  let mudouPendentes = limparPendentes();
+  for (const o of pedidos) {
+    const t = taxas[o.id] || {};
+    const pag = o.payment || {};
+    const itemsRaw = (o.line_items || []).map((it) => {
+      const sku = it.seller_sku || it.sku_id || '';
+      if (sku && !temAssociacao(sku)
+        && registrarPendente(sku, it.product_name || ('SKU ' + sku + ' (TikTok)'), 'tik', new Date((o.create_time || 0) * 1000).toISOString())) mudouPendentes = true;
+      return {
+        titulo: it.product_name || sku || '—', chave: sku, anuncioId: String(it.product_id || ''),
+        sku: resolverSku(sku), associado: temAssociacao(sku),
+        qtd: 1,
+        unit: Number(it.sale_price || it.original_price || 0),
+        comissao: 0,
+        img: it.sku_image || costs.fotos[resolverSku(sku)] || '',
+      };
+    });
+    const taxaTotal = Math.abs(Number(t.platform_commission || 0))
+      + Math.abs(Number(t.transaction_fee || 0))
+      + Math.abs(Number(t.affiliate_commission || 0))
+      + Math.abs(Number(t.sfp_service_fee || 0));
+    const soma = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
+    itemsRaw.forEach((i) => { i.comissao = taxaTotal * ((i.unit * i.qtd) / soma); });
+    out.push(buildOrder({
+      id: o.id, data: new Date((o.create_time || 0) * 1000).toISOString(),
+      dataAprov: new Date((o.paid_time || o.create_time || 0) * 1000).toISOString(),
+      status: String(o.status || '').toUpperCase() === 'CANCELLED' ? 'cancelled' : 'shipped',
+      envio: ttkEnvio(o), pack: false,
+      itemsRaw,
+      freteVend: Math.abs(Number(t.actual_shipping_fee || 0)),
+      freteComp: Number(pag.shipping_fee || 0),
+      descontos: Number(pag.seller_discount || 0), conta: 'tik',
+    }));
+  }
+  if (mudouPendentes) writeJSON(COSTS_FILE, costs);
+  return out;
+}
+
+// Canal TikTok Shop para o dashboard
+async function ttkBuildChannel(deISO, ateISO) {
+  const vendas = await ttkListSales(deISO, ateISO);
+  let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
+  let pedidosSemAssoc = 0, contados = 0;
+  const bySku = {};
+  for (const v of vendas) {
+    if (v.status === 'cancelled') continue;
+    if (v.semAssoc) { pedidosSemAssoc++; continue; }
+    contados++;
+    fat += v.resumo.total; comissao += v.resumo.comissao; freteVendedor += v.resumo.freteVend;
+    custoProdutos += v.resumo.custo + v.resumo.custoExtra; imposto += v.resumo.imposto;
+    for (const it of v.itens) {
+      const b = bySku[it.sku] || (bySku[it.sku] = { nome: it.titulo, un: 0, fat: 0, lucro: 0 });
+      b.un += it.qtd; b.fat += it.total; b.lucro += it.lucro;
+    }
+  }
+  const liq = fat - comissao - freteVendedor;
+  const lb = liq - custoProdutos - imposto;
+  return {
+    channel: {
+      nome: 'TikTok Shop', cor: '#69c9d0',
+      fat: round2(fat), liq: round2(liq), lucroBruto: round2(lb),
+      ads: 0, lucro: round2(lb), pedidos: contados, semAssoc: pedidosSemAssoc,
+    },
+    dreDetail: {
+      fat: round2(fat),
+      taxas: [['Comissão e taxas TikTok', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]],
+      liq: round2(liq),
+      custos: [['Custo dos produtos', -round2(custoProdutos)], ['Impostos', -round2(imposto)]],
+      lb: round2(lb),
+    },
+    produtos: Object.keys(bySku).map((sku) => {
+      const b = bySku[sku];
+      return [b.nome, sku, b.un, round2(b.fat), round2(b.lucro), round2(b.lucro), round2(b.fat ? (b.lucro / b.fat) * 100 : 0), null];
+    }).sort((a, z) => z[3] - a[3]),
+  };
+}
+
 // Roda várias tarefas ao mesmo tempo, com limite (o ML recusa rajadas grandes)
 async function emLotes(itens, limite, tarefa) {
   const out = new Array(itens.length);
@@ -1261,9 +1467,26 @@ async function buildDashboard({ from, to }) {
     status.shp = 'disconnected';
   }
 
+  // TikTok Shop (Partner API)
+  if (ttkConectada()) {
+    try {
+      const built = await ttkBuildChannel(from, to);
+      channels.tik = built.channel;
+      dreDetail.tik = built.dreDetail;
+      produtosPorCanal.tik = built.produtos;
+      status.tik = 'connected';
+      algumConectado = true;
+    } catch (e) {
+      status.tik = 'error';
+      status.tikError = String(e.message || e);
+    }
+  } else {
+    status.tik = 'disconnected';
+  }
+
   // canais futuros como placeholders
   const placeholders = {
-    mag: { nome: 'Magalu', cor: '#0086ff' }, tik: { nome: 'TikTok Shop', cor: '#69c9d0' },
+    mag: { nome: 'Magalu', cor: '#0086ff' },
     loja: { nome: 'Loja própria', cor: '#a78bfa' },
   };
   for (const k of Object.keys(placeholders)) {
@@ -1399,7 +1622,6 @@ const server = http.createServer(async (req, res) => {
         tipo: typeof v,
         veioDoAmbiente: !!process.env.APP_PASSWORD,
         chavesParecidas: Object.keys(process.env).filter((k) => /PASS|SENHA|APP_/i.test(k)),
-        pedidoTrouxeSenha: !!req.headers.authorization,
       });
     }
 
@@ -1417,6 +1639,53 @@ const server = http.createServer(async (req, res) => {
       }
       const ips = [...new Set(achados.map((a) => a.ip).filter(Boolean))];
       return sendJSON(res, 200, { ips, detalhe: achados });
+    }
+
+    // ===== TikTok Shop =====
+    if (p === '/api/tiktok' && req.method === 'GET') {
+      return sendJSON(res, 200, {
+        temApp: ttkTemApp(), conectada: ttkConectada(),
+        appKey: ttk.appKey || '', temSecret: !!ttk.appSecret, serviceId: ttk.serviceId || '',
+        shopId: ttk.shopId || '', loja: ttk.loja || '',
+        redirect: (ML.redirectUri || '').replace(/\/callback$/, '') + '/callback-tiktok',
+      });
+    }
+    if (p === '/api/tiktok' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.appKey != null) ttk.appKey = String(b.appKey).trim();
+      if (b.appSecret) ttk.appSecret = String(b.appSecret).trim();
+      if (b.serviceId != null) ttk.serviceId = String(b.serviceId).trim();
+      ttkSalvar();
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p === '/auth/tiktok') {
+      if (!ttkTemApp() || !ttk.serviceId) return sendJSON(res, 400, { error: 'Preencha App Key, App Secret e Service ID.' });
+      res.writeHead(302, { Location: ttkLinkAutorizacao() });
+      return res.end();
+    }
+    if (p === '/callback-tiktok') {
+      const code = u.searchParams.get('code');
+      if (!code) { res.writeHead(302, { Location: '/?tiktok=erro' }); return res.end(); }
+      try {
+        await ttkTrocarCode(code);
+        await ttkDescobrirLoja();
+        res.writeHead(302, { Location: '/?tiktok=ok' });
+      } catch (e) {
+        res.writeHead(302, { Location: '/?tiktok=erro&msg=' + encodeURIComponent(String(e.message || e)) });
+      }
+      return res.end();
+    }
+    if (p === '/api/tiktok/testar' && req.method === 'POST') {
+      if (!ttkTemApp() || !ttk.refreshToken) return sendJSON(res, 200, { ok: false, erro: 'Conecte a loja primeiro.' });
+      try {
+        const loja = await ttkDescobrirLoja();
+        return sendJSON(res, 200, { ok: true, loja: loja.name || ttk.loja });
+      } catch (e) { return sendJSON(res, 200, { ok: false, erro: String(e.message || e) }); }
+    }
+    if (p === '/api/tiktok/desconectar' && req.method === 'POST') {
+      ttk = { appKey: ttk.appKey, appSecret: ttk.appSecret, serviceId: ttk.serviceId, accessToken: '', refreshToken: '', expiraEm: 0, shopId: '', shopCipher: '', loja: '' };
+      ttkSalvar();
+      return sendJSON(res, 200, { ok: true });
     }
 
     // ===== Shopee: credenciais, autorização da loja e conexão =====
@@ -1688,7 +1957,7 @@ const server = http.createServer(async (req, res) => {
       const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
       const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
       const conectadas = contasConectadas();
-      if (!conectadas.length && !amzConectada() && !shpConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
+      if (!conectadas.length && !amzConectada() && !shpConectada() && !ttkConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
       // se o filtro pedir um canal específico, busca só nele
       const filtro = u.searchParams.get('canal');
       const alvo = ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : (filtro === 'amz' ? [] : conectadas);
@@ -1705,6 +1974,10 @@ const server = http.createServer(async (req, res) => {
       if (shpConectada() && (!filtro || filtro === 'all' || filtro === 'shp')) {
         try { sales = sales.concat(await shpListSales(from, to)); }
         catch (e) { erros.push('Shopee: ' + String(e.message || e)); }
+      }
+      if (ttkConectada() && (!filtro || filtro === 'all' || filtro === 'tik')) {
+        try { sales = sales.concat(await ttkListSales(from, to)); }
+        catch (e) { erros.push('TikTok Shop: ' + String(e.message || e)); }
       }
       sales.sort((a, b) => new Date(b.data) - new Date(a.data));
       const semAssoc = sales.filter((s) => s.semAssoc).length;
