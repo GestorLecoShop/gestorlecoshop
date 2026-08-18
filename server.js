@@ -294,6 +294,16 @@ async function amzAccessToken() {
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Datas em horário de Brasília. O servidor roda em UTC, então escrevemos o
+// relógio de Brasília e o fuso de verdade — antes cortávamos o "Z" do UTC e
+// colávamos "-03:00", o que jogava o período 3 horas para frente.
+const isoBR = (d) => new Date(d.getTime() - 3 * 3600e3).toISOString().slice(0, 19) + '-03:00';
+const agoraBR = () => isoBR(new Date(Date.now() - 120000));
+function inicioDoMesBR() {
+  const b = new Date(Date.now() - 3 * 3600e3);
+  return isoBR(new Date(Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), 1, 3, 0, 0)));
+}
+
 // Chamada à SP-API já com token, repetindo quando a Amazon pede para desacelerar (429)
 async function amzApi(caminho, tentativa = 0) {
   const token = await amzAccessToken();
@@ -309,21 +319,54 @@ async function amzApi(caminho, tentativa = 0) {
   return json || {};
 }
 
-// Pedidos do período (paginado por NextToken)
+// Aviso do canal Amazon quando a leitura sai incompleta. Fica visível na tela em
+// vez de virar número errado no painel.
+let amzAviso = '';
+
+// getOrders tem cota baixíssima (cerca de 1 chamada por minuto). O amzApi já
+// repete algumas vezes; aqui insistimos mais um pouco, só para 429.
+async function amzTentar(caminho) {
+  const esperas = [8000, 25000];
+  let ultimo;
+  for (let i = 0; i <= esperas.length; i++) {
+    try { return await amzApi(caminho); }
+    catch (e) {
+      ultimo = e;
+      if (!/429|throttl|quota|rate/i.test(String(e.message || ''))) throw e;
+      if (i < esperas.length) await esperar(esperas[i]);
+    }
+  }
+  throw ultimo;
+}
+
+// Pedidos do período (paginado por NextToken). Períodos longos são quebrados em
+// janelas de 7 dias: uma janela que falhe não derruba as outras, e o que já foi
+// lido nunca é descartado.
 async function amzPedidos(deISO, ateISO) {
   const out = [];
-  let proximo = '';
-  for (let i = 0; i < 60; i++) {
-    const q = new URLSearchParams({ MarketplaceIds: amz.marketplaceId });
-    if (proximo) q.set('NextToken', proximo);
-    else { q.set('CreatedAfter', deISO); q.set('CreatedBefore', ateISO); q.set('MaxResultsPerPage', '100'); }
-    const p = (await amzApi('/orders/v0/orders?' + q.toString())).payload || {};
-    out.push(...(p.Orders || []));
-    proximo = p.NextToken || '';
-    if (!proximo) break;
-    await esperar(1200);   // getOrders é limitado; não vale forçar
+  const falhas = [];
+  const inicio = new Date(deISO).getTime();
+  const fim = new Date(ateISO).getTime();
+  const passo = 7 * 864e5;
+  for (let t = inicio; t < fim; t += passo) {
+    const de = new Date(t).toISOString();
+    const ate = new Date(Math.min(t + passo, fim)).toISOString();
+    let proximo = '';
+    for (let i = 0; i < 60; i++) {
+      const q = new URLSearchParams({ MarketplaceIds: amz.marketplaceId });
+      if (proximo) q.set('NextToken', proximo);
+      else { q.set('CreatedAfter', de); q.set('CreatedBefore', ate); q.set('MaxResultsPerPage', '100'); }
+      let p;
+      try { p = (await amzTentar('/orders/v0/orders?' + q.toString())).payload || {}; }
+      catch (e) { falhas.push(de.slice(0, 10) + ' a ' + ate.slice(0, 10) + ': ' + String(e.message || e)); break; }
+      out.push(...(p.Orders || []));
+      proximo = p.NextToken || '';
+      if (!proximo) break;
+      await esperar(2000);
+    }
+    if (t + passo < fim) await esperar(2000);
   }
-  return out;
+  return { pedidos: out, falhas };
 }
 
 // Taxas e valores por pedido: um único pedido de eventos financeiros do período,
@@ -398,30 +441,46 @@ function janelaFinanceiro(deISO) {
 }
 
 // Pedidos + taxas + itens, tudo que as telas precisam
+// A mesma leitura serve ao painel e à página de vendas. Guardamos por 2 minutos
+// para não gastar a cota da Amazon duas vezes na mesma consulta.
+const amzCache = new Map();
+
 async function amzPedidosDetalhados(deISO, ateISO, comItens) {
-  let pedidos = [];
-  try { pedidos = await amzPedidos(deISO, ateISO); } catch { pedidos = []; }
+  const chave = deISO + '|' + ateISO + '|' + (comItens ? 1 : 0);
+  const avisoDe = (f) => (f && f.length ? 'leitura incompleta em ' + f.length + ' período(s) — ' + f[0] : '');
+  const guardado = amzCache.get(chave);
+  if (guardado && Date.now() - guardado.em < 120000) {
+    amzAviso = avisoDe(guardado.dados.falhas);
+    return guardado.dados;
+  }
+
+  const { pedidos, falhas } = await amzPedidos(deISO, ateISO);
+  // Nunca montamos pedidos a partir do extrato financeiro: data, status e tipo de
+  // envio só existem no pedido. O extrato traria a data do repasse, todo pedido
+  // como "enviado" e todo envio como "próprio" — número errado com cara de certo.
+  if (!pedidos.length && falhas.length) throw new Error('não consegui ler os pedidos — ' + falhas[0]);
+  amzAviso = avisoDe(falhas);
+
   const jan = janelaFinanceiro(deISO);
   const fin = await amzFinanceiro(jan.de, jan.ate);
-  if (!pedidos.length) {
-    pedidos = Object.keys(fin).map((id) => ({
-      AmazonOrderId: id, PurchaseDate: fin[id].data || deISO, OrderStatus: 'Shipped',
-    })).filter((o) => o.PurchaseDate >= deISO && o.PurchaseDate <= ateISO);
-  }
   let itens = [];
   if (comItens) {
-    itens = await emLotes(pedidos, 3, async (o) => {
+    itens = await emLotes(pedidos, 2, async (o) => {
       try { return ((await amzApi('/orders/v0/orders/' + o.AmazonOrderId + '/orderItems')).payload || {}).OrderItems || []; }
       catch { return []; }
     });
   }
-  return { pedidos, fin, itens };
+  const dados = { pedidos, fin, itens, falhas };
+  amzCache.set(chave, { em: Date.now(), dados });
+  if (amzCache.size > 24) amzCache.delete(amzCache.keys().next().value);
+  return dados;
 }
 
 // Vendas detalhadas da Amazon para a página "Vendas"
 async function amzListSales(deISO, ateISO) {
   const { pedidos, fin, itens } = await amzPedidosDetalhados(deISO, ateISO, true);
   const out = [];
+  let semPreco = 0;
   let mudouPendentes = limparPendentes();
   pedidos.forEach((o, i) => {
     const f = fin[o.AmazonOrderId] || { itens: {} };
@@ -456,15 +515,24 @@ async function amzListSales(deISO, ateISO) {
     }
     // Sem preço em lugar nenhum (pedido ainda pendente na Amazon): não dá para
     // medir. Melhor deixar de fora do que mostrar lucro negativo por aplicar
-    // custo sobre receita zero.
-    if (!itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0)) return;
-    out.push(buildOrder({
+    // custo sobre receita zero — mas avisamos quantos ficaram de fora.
+    if (!itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0)) { semPreco++; return; }
+    const st = String(o.OrderStatus || '').toLowerCase();
+    const pedido = buildOrder({
       id: o.AmazonOrderId, data: o.PurchaseDate, dataAprov: o.PurchaseDate,
-      status: String(o.OrderStatus || '').toLowerCase() === 'canceled' ? 'cancelled' : 'shipped',
+      status: st === 'canceled' ? 'cancelled' : (st === 'pending' ? 'pending' : 'shipped'),
       envio: amzEnvio(o), pack: false,
       itemsRaw, freteVend: 0, freteComp: (f.freteComprador || 0), descontos: 0, conta: 'amz',
-    }));
+    });
+    // A Amazon lança as taxas dias depois da venda. Enquanto não lança, o lucro
+    // do pedido está otimista — marcamos para não confundir com número fechado.
+    pedido.taxaPendente = !fin[o.AmazonOrderId];
+    out.push(pedido);
   });
+  if (semPreco) {
+    amzAviso = (amzAviso ? amzAviso + ' · ' : '')
+      + semPreco + ' pedido(s) sem preço ainda na Amazon ficaram de fora';
+  }
   if (mudouPendentes) writeJSON(COSTS_FILE, costs);
   return out;
 }
@@ -1436,11 +1504,13 @@ async function buildDashboard({ from, to }) {
   // Amazon (Selling Partner API)
   if (amzConectada()) {
     try {
+      amzAviso = '';
       const built = await amzBuildChannel(from, to);
       channels.amz = built.channel;
       dreDetail.amz = built.dreDetail;
       produtosPorCanal.amz = built.produtos;
-      status.amz = 'connected';
+      status.amz = amzAviso ? 'error' : 'connected';
+      if (amzAviso) status.amzError = amzAviso;
       algumConectado = true;
     } catch (e) {
       status.amz = 'error';
@@ -1944,18 +2014,14 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ml: mlConnected('ml'), contas, duplicada, clientIdSet: !!ML.clientId, redirectUri: ML.redirectUri });
     }
     if (p === '/api/dashboard') {
-      const now = new Date();
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
-      const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
+      const from = u.searchParams.get('from') || inicioDoMesBR();
+      const to = u.searchParams.get('to') || agoraBR();
       const data = await buildDashboard({ from, to });
       return sendJSON(res, 200, data);
     }
     if (p === '/api/sales') {
-      const now = new Date();
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
-      const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
+      const from = u.searchParams.get('from') || inicioDoMesBR();
+      const to = u.searchParams.get('to') || agoraBR();
       const conectadas = contasConectadas();
       if (!conectadas.length && !amzConectada() && !shpConectada() && !ttkConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
       // se o filtro pedir um canal específico, busca só nele
@@ -1968,8 +2034,11 @@ const server = http.createServer(async (req, res) => {
         catch (e) { erros.push(`${CONTAS_ML[conta].nome}: ${String(e.message || e)}`); }
       }
       if (amzConectada() && (!filtro || filtro === 'all' || filtro === 'amz')) {
-        try { sales = sales.concat(await amzListSales(from, to)); }
-        catch (e) { erros.push('Amazon: ' + String(e.message || e)); }
+        amzAviso = '';
+        try {
+          sales = sales.concat(await amzListSales(from, to));
+          if (amzAviso) erros.push('Amazon: ' + amzAviso);
+        } catch (e) { erros.push('Amazon: ' + String(e.message || e)); }
       }
       if (shpConectada() && (!filtro || filtro === 'all' || filtro === 'shp')) {
         try { sales = sales.concat(await shpListSales(from, to)); }
