@@ -446,6 +446,13 @@ async function amzListSales(deISO, ateISO) {
         img: costs.fotos[resolverSku(skuBruto)] || '',
       };
     });
+    // pedido pendente sem preço no item: rateia o total do pedido pela quantidade
+    const somaItens = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0);
+    const totalPedido = Number(((o.OrderTotal || {}).Amount) || 0);
+    if (!somaItens && totalPedido) {
+      const qt = itemsRaw.reduce((s, i) => s + i.qtd, 0) || 1;
+      itemsRaw.forEach((i) => { i.unit = totalPedido / qt; });
+    }
     out.push(buildOrder({
       id: o.AmazonOrderId, data: o.PurchaseDate, dataAprov: o.PurchaseDate,
       status: String(o.OrderStatus || '').toLowerCase() === 'canceled' ? 'cancelled' : 'shipped',
@@ -487,6 +494,14 @@ async function amzBuildChannel(deISO, ateISO) {
         const linha = f.itens[sku] || (f.itens[sku] = { qtd: 0, receita: 0, imposto: 0, frete: 0, taxas: 0 });
         linha.qtd += it.QuantityOrdered || 0;
         linha.receita += Number(((it.ItemPrice || {}).Amount) || 0);
+      }
+      // Em pedido ainda pendente a Amazon esconde o preço do item; usamos o total
+      // do pedido, rateado pela quantidade, para não ficar com receita zero.
+      const somaR = Object.keys(f.itens).reduce((s, k) => s + f.itens[k].receita, 0);
+      const totalPedido = Number(((o.OrderTotal || {}).Amount) || 0);
+      if (!somaR && totalPedido) {
+        const qt = Object.keys(f.itens).reduce((s, k) => s + f.itens[k].qtd, 0) || 1;
+        for (const k of Object.keys(f.itens)) f.itens[k].receita = totalPedido * (f.itens[k].qtd / qt);
       }
     }
     let semAssoc = false;
