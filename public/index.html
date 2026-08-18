@@ -580,7 +580,7 @@ async function loadSales(){
   }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao buscar vendas.</div>'; }
 }
 const ENVIO_PT={fulfillment:'FULL',self_service:'Flex',cross_docking:'Coleta',drop_off:'Agência',xd_drop_off:'Mercado Envios',me2:'Mercado Envios',custom:'Combinado'};
-const DOT={delivered:'#22c55e',shipped:'#22c55e',paid:'#fbbf24',cancelled:'#fb7185'};
+const DOT={delivered:'#22c55e',shipped:'#22c55e',paid:'#fbbf24',pending:'#fbbf24',cancelled:'#fb7185'};
 function fmtFull(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
 function fmtData(iso){const d=new Date(iso);if(isNaN(d))return '—';const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`;}
 function fmtHora(iso){const d=new Date(iso);if(isNaN(d))return '';const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
@@ -591,7 +591,7 @@ const IC_HORA='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="
 const IC_RAIO='<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>';
 const IC_PACOTE='<svg viewBox="0 0 24 24"><rect x="2.5" y="13.5" width="7" height="7" rx="1"/><rect x="14.5" y="13.5" width="7" height="7" rx="1"/><rect x="8.5" y="3" width="7" height="7" rx="1"/><path d="M12 10v2M6 13.5v-1.5h12v1.5"/></svg>';
 const IC_CAMINHAO='<svg viewBox="0 0 24 24"><path d="M1 3h13v13H1zM14 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/></svg>';
-const STATUS_PT={paid:'Pago',shipped:'Enviado',delivered:'Entregue',cancelled:'Cancelado',ready_to_ship:'Pronto para enviar',handling:'Em preparação',not_delivered:'Não entregue'};
+const STATUS_PT={paid:'Pago',shipped:'Enviado',delivered:'Entregue',cancelled:'Cancelado',ready_to_ship:'Pronto para enviar',handling:'Em preparação',not_delivered:'Não entregue',pending:'Pendente'};
 // Cada modalidade de envio ganha uma cor própria, como no Gestor Seller
 function seloEnvio(envio){
   if(envio==='fulfillment') return `<span class="ship full" title="Mercado Envios Full — estoque no ML">${IC_RAIO}FULL</span>`;
@@ -615,6 +615,7 @@ function cabecalhoVenda(o){
     <span class="ord-date">${IC_HORA}${fmtHora(o.data)}</span>
     ${seloEnvio(o.envio)}
     ${o.pack?`<span class="pack" title="Vários pedidos enviados juntos">${IC_PACOTE}Pacote</span>`:''}
+    ${o.taxaPendente?'<span class="ship alerta" title="A Amazon ainda não lançou as taxas deste pedido — o lucro está otimista">taxa pendente</span>':''}
     ${o.semAssoc?'<span class="ship alerta" title="Anúncio sem produto associado — fora das contas">sem produto</span>':''}
     <span class="ord-mp">${o.marketplace}</span>
   </div>`;
