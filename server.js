@@ -122,7 +122,8 @@ const CONTAS_ML = {
 };
 const ehContaML = (c) => Object.prototype.hasOwnProperty.call(CONTAS_ML, c);
 // Nome do canal para exibir no card da venda (Mercado Livre, LDM SC, Amazon...)
-const nomeCanal = (c) => (CONTAS_ML[c] && CONTAS_ML[c].nome) || (c === 'amz' ? 'Amazon' : 'Mercado Livre');
+const NOMES_CANAL = { amz: 'Amazon', shp: 'Shopee' };
+const nomeCanal = (c) => (CONTAS_ML[c] && CONTAS_ML[c].nome) || NOMES_CANAL[c] || 'Mercado Livre';
 
 // Em hospedagem o disco é temporário: se não há token salvo mas existe a variável
 // de ambiente correspondente, restaura a conexão daquela conta a partir dela.
@@ -560,6 +561,242 @@ async function amzBuildChannel(deISO, ateISO) {
   }).sort((a, z) => z[3] - a[3]);
 
   return { channel, dreDetail, produtos };
+}
+
+// ================= SHOPEE (Open Platform v2) =================
+// Toda chamada é assinada com HMAC-SHA256 usando a partner_key como segredo.
+//   API pública:  partner_id + caminho + timestamp
+//   API de loja:  partner_id + caminho + timestamp + access_token + shop_id
+const SHP_FILE = path.join(DATA_DIR, 'shopee.json');
+const SHP_HOSTS = {
+  br: 'https://openplatform.shopee.com.br',
+  global: 'https://partner.shopeemobile.com',
+  sandbox: 'https://openplatform.sandbox.test-stable.shopee.sg',
+};
+let shp = readJSON(SHP_FILE, {});
+shp = { partnerId: '', partnerKey: '', shopId: '', accessToken: '', refreshToken: '', expiraEm: 0, regiao: 'br', loja: '', ...shp };
+const shpHost = () => SHP_HOSTS[shp.regiao] || SHP_HOSTS.br;
+const shpTemApp = () => !!(shp.partnerId && shp.partnerKey);
+const shpConectada = () => !!(shpTemApp() && shp.shopId && shp.refreshToken);
+const shpSalvar = () => writeJSON(SHP_FILE, shp);
+
+function shpAssinar(caminho, ts, comLoja) {
+  let base = String(shp.partnerId) + caminho + String(ts);
+  if (comLoja) base += String(shp.accessToken) + String(shp.shopId);
+  return crypto.createHmac('sha256', String(shp.partnerKey)).update(base).digest('hex');
+}
+
+// Link que o vendedor abre para autorizar a loja
+function shpLinkAutorizacao(redirect) {
+  const ts = Math.floor(Date.now() / 1000);
+  const caminho = '/api/v2/shop/auth_partner';
+  const q = new URLSearchParams({
+    partner_id: String(shp.partnerId), timestamp: String(ts),
+    sign: shpAssinar(caminho, ts, false), redirect,
+  });
+  return shpHost() + caminho + '?' + q.toString();
+}
+
+// Troca o code da autorização por access_token + refresh_token
+async function shpTrocarCode(code, shopId) {
+  const ts = Math.floor(Date.now() / 1000);
+  const caminho = '/api/v2/auth/token/get';
+  const q = new URLSearchParams({ partner_id: String(shp.partnerId), timestamp: String(ts), sign: shpAssinar(caminho, ts, false) });
+  const { status, json } = await request('POST', shpHost() + caminho + '?' + q.toString(), {
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, partner_id: Number(shp.partnerId), shop_id: Number(shopId) }),
+  });
+  if (status !== 200 || !json.access_token) throw new Error('Shopee: ' + (json.message || json.error || ('HTTP ' + status)));
+  shp.shopId = String(shopId);
+  shp.accessToken = json.access_token;
+  shp.refreshToken = json.refresh_token;
+  shp.expiraEm = Date.now() + (json.expire_in || 14400) * 1000;
+  shpSalvar();
+  return json;
+}
+
+// Renova o access_token (vale 4 horas). A Shopee gira os dois tokens.
+async function shpRenovar() {
+  const ts = Math.floor(Date.now() / 1000);
+  const caminho = '/api/v2/auth/access_token/get';
+  const q = new URLSearchParams({ partner_id: String(shp.partnerId), timestamp: String(ts), sign: shpAssinar(caminho, ts, false) });
+  const { status, json } = await request('POST', shpHost() + caminho + '?' + q.toString(), {
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: shp.refreshToken, partner_id: Number(shp.partnerId), shop_id: Number(shp.shopId) }),
+  });
+  const r = json.response || json;
+  if (status !== 200 || !r.access_token) throw new Error('Shopee: não consegui renovar — ' + (json.message || json.error || ('HTTP ' + status)));
+  shp.accessToken = r.access_token;
+  if (r.refresh_token) shp.refreshToken = r.refresh_token;
+  shp.expiraEm = Date.now() + (r.expire_in || 14400) * 1000;
+  shpSalvar();
+  return shp.accessToken;
+}
+
+async function shpToken() {
+  if (shp.accessToken && Date.now() < shp.expiraEm - 300000) return shp.accessToken;
+  return shpRenovar();
+}
+
+// Chamada autenticada a uma API de loja
+async function shpApi(caminho, params = {}, corpo = null) {
+  await shpToken();
+  const ts = Math.floor(Date.now() / 1000);
+  const q = new URLSearchParams({
+    partner_id: String(shp.partnerId), timestamp: String(ts),
+    access_token: shp.accessToken, shop_id: String(shp.shopId),
+    sign: shpAssinar(caminho, ts, true),
+  });
+  for (const k of Object.keys(params)) if (params[k] !== '' && params[k] != null) q.set(k, String(params[k]));
+  const url = shpHost() + caminho + '?' + q.toString();
+  const { status, json } = corpo
+    ? await request('POST', url, { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) })
+    : await request('GET', url, {});
+  if (status >= 400 || (json && json.error)) {
+    throw new Error('Shopee ' + (json && json.error ? json.error : status) + ': ' + ((json && json.message) || '').slice(0, 180));
+  }
+  return json || {};
+}
+
+// Pedidos do período. A Shopee aceita janela de no máximo 15 dias por consulta.
+async function shpPedidos(deISO, ateISO) {
+  const t0 = Math.floor(new Date(deISO).getTime() / 1000);
+  const t1 = Math.floor(new Date(ateISO).getTime() / 1000);
+  const sns = [];
+  for (let ini = t0; ini < t1; ini += 15 * 86400) {
+    const fim = Math.min(ini + 15 * 86400 - 1, t1);
+    let cursor = '';
+    for (let i = 0; i < 60; i++) {
+      const j = await shpApi('/api/v2/order/get_order_list', {
+        time_range_field: 'create_time', time_from: ini, time_to: fim, page_size: 100, cursor,
+      });
+      const r = j.response || {};
+      (r.order_list || []).forEach((o) => sns.push(o.order_sn));
+      if (!r.more || !r.next_cursor) break;
+      cursor = r.next_cursor;
+    }
+  }
+  return [...new Set(sns)];
+}
+
+// Detalhe dos pedidos (até 50 por chamada)
+async function shpDetalhes(sns) {
+  const out = [];
+  const campos = 'item_list,total_amount,order_status,create_time,pay_time,shipping_carrier,'
+    + 'fulfillment_flag,checkout_shipping_carrier,payment_method,buyer_username';
+  for (let i = 0; i < sns.length; i += 50) {
+    const j = await shpApi('/api/v2/order/get_order_detail', {
+      order_sn_list: sns.slice(i, i + 50).join(','), response_optional_fields: campos,
+    });
+    out.push(...(((j.response || {}).order_list) || []));
+  }
+  return out;
+}
+
+// Taxas reais e valor líquido (escrow), até 50 pedidos por chamada
+async function shpEscrow(sns) {
+  const mapa = {};
+  for (let i = 0; i < sns.length; i += 50) {
+    let j;
+    try { j = await shpApi('/api/v2/payment/get_escrow_detail_batch', {}, { order_sn_list: sns.slice(i, i + 50) }); }
+    catch { continue; }
+    const lista = j.response || [];
+    for (const e of (Array.isArray(lista) ? lista : [])) {
+      const d = e.escrow_detail || e;
+      if (d && d.order_sn) mapa[d.order_sn] = d.order_income || {};
+    }
+  }
+  return mapa;
+}
+
+// Tipo de envio da Shopee: estoque no Shopee (Full) ou envio do vendedor
+const shpEnvio = (o) => (String(o.fulfillment_flag || '').includes('shopee') ? 'shopee_full' : 'shopee_envios');
+
+// Vendas detalhadas da Shopee para a página "Vendas"
+async function shpListSales(deISO, ateISO) {
+  const sns = await shpPedidos(deISO, ateISO);
+  if (!sns.length) return [];
+  const [detalhes, escrow] = await Promise.all([shpDetalhes(sns), shpEscrow(sns)]);
+  const out = [];
+  let mudouPendentes = limparPendentes();
+  for (const o of detalhes) {
+    const inc = escrow[o.order_sn] || {};
+    const porSku = {};
+    for (const it of (inc.items || [])) porSku[it.item_sku || it.model_sku || ''] = it;
+    const itemsRaw = (o.item_list || []).map((it) => {
+      const sku = it.model_sku || it.item_sku || '';
+      const qtd = it.model_quantity_purchased || 0;
+      const ei = porSku[sku] || {};
+      const unit = ei.discounted_price != null ? ei.discounted_price
+        : (it.model_discounted_price != null ? it.model_discounted_price : (it.model_original_price || 0));
+      if (sku && !temAssociacao(sku)
+        && registrarPendente(sku, it.item_name || ('SKU ' + sku + ' (Shopee)'), 'shp', new Date((o.create_time || 0) * 1000).toISOString())) mudouPendentes = true;
+      return {
+        titulo: it.item_name || sku || '—', chave: sku, anuncioId: String(it.item_id || ''),
+        sku: resolverSku(sku), associado: temAssociacao(sku),
+        qtd, unit, comissao: 0,
+        img: (it.image_info && it.image_info.image_url) || costs.fotos[resolverSku(sku)] || '',
+      };
+    });
+    // as taxas da Shopee vêm no total do pedido, não por item: rateamos pelo valor
+    const taxaTotal = (inc.commission_fee || 0) + (inc.service_fee || 0) + (inc.seller_transaction_fee || 0)
+      + (inc.order_ams_commission_fee || 0) + (inc.campaign_fee || 0) + (inc.seller_order_processing_fee || 0);
+    const somaItens = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
+    itemsRaw.forEach((i) => { i.comissao = taxaTotal * ((i.unit * i.qtd) / somaItens); });
+    const freteVend = Math.max(0, (inc.actual_shipping_fee || 0) - (inc.shopee_shipping_rebate || 0) - (inc.buyer_paid_shipping_fee || 0));
+    out.push(buildOrder({
+      id: o.order_sn, data: new Date((o.create_time || 0) * 1000).toISOString(),
+      dataAprov: new Date((o.pay_time || o.create_time || 0) * 1000).toISOString(),
+      status: String(o.order_status || '').toUpperCase() === 'CANCELLED' ? 'cancelled' : 'shipped',
+      envio: shpEnvio(o), pack: false,
+      itemsRaw, freteVend, freteComp: (inc.buyer_paid_shipping_fee || 0),
+      descontos: (inc.voucher_from_seller || 0) + (inc.seller_discount || 0), conta: 'shp',
+    }));
+  }
+  if (mudouPendentes) writeJSON(COSTS_FILE, costs);
+  return out;
+}
+
+// Canal Shopee para o dashboard
+async function shpBuildChannel(deISO, ateISO) {
+  const vendas = await shpListSales(deISO, ateISO);
+  let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
+  let pedidosSemAssoc = 0, contados = 0;
+  const bySku = {};
+  for (const v of vendas) {
+    if (v.status === 'cancelled') continue;
+    if (v.semAssoc) { pedidosSemAssoc++; continue; }
+    contados++;
+    fat += v.resumo.total;
+    comissao += v.resumo.comissao;
+    freteVendedor += v.resumo.freteVend;
+    custoProdutos += v.resumo.custo + v.resumo.custoExtra;
+    imposto += v.resumo.imposto;
+    for (const it of v.itens) {
+      const b = bySku[it.sku] || (bySku[it.sku] = { nome: it.titulo, un: 0, fat: 0, lucro: 0 });
+      b.un += it.qtd; b.fat += it.total; b.lucro += it.lucro;
+    }
+  }
+  const liq = fat - comissao - freteVendedor;
+  const lb = liq - custoProdutos - imposto;
+  return {
+    channel: {
+      nome: 'Shopee', cor: '#ee4d2d',
+      fat: round2(fat), liq: round2(liq), lucroBruto: round2(lb),
+      ads: 0, lucro: round2(lb), pedidos: contados, semAssoc: pedidosSemAssoc,
+    },
+    dreDetail: {
+      fat: round2(fat),
+      taxas: [['Comissão e taxas Shopee', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]],
+      liq: round2(liq),
+      custos: [['Custo dos produtos', -round2(custoProdutos)], ['Impostos', -round2(imposto)]],
+      lb: round2(lb),
+    },
+    produtos: Object.keys(bySku).map((sku) => {
+      const b = bySku[sku];
+      return [b.nome, sku, b.un, round2(b.fat), round2(b.lucro), round2(b.lucro), round2(b.fat ? (b.lucro / b.fat) * 100 : 0), null];
+    }).sort((a, z) => z[3] - a[3]),
+  };
 }
 
 // Roda várias tarefas ao mesmo tempo, com limite (o ML recusa rajadas grandes)
@@ -1007,9 +1244,25 @@ async function buildDashboard({ from, to }) {
     status.amz = 'disconnected';
   }
 
+  // Shopee (Open Platform)
+  if (shpConectada()) {
+    try {
+      const built = await shpBuildChannel(from, to);
+      channels.shp = built.channel;
+      dreDetail.shp = built.dreDetail;
+      produtosPorCanal.shp = built.produtos;
+      status.shp = 'connected';
+      algumConectado = true;
+    } catch (e) {
+      status.shp = 'error';
+      status.shpError = String(e.message || e);
+    }
+  } else {
+    status.shp = 'disconnected';
+  }
+
   // canais futuros como placeholders
   const placeholders = {
-    shp: { nome: 'Shopee', cor: '#ee4d2d' },
     mag: { nome: 'Magalu', cor: '#0086ff' }, tik: { nome: 'TikTok Shop', cor: '#69c9d0' },
     loja: { nome: 'Loja própria', cor: '#a78bfa' },
   };
@@ -1137,6 +1390,61 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, { ok: false, erro: String(e.message || e) });
       }
     }
+    // ===== Shopee: credenciais, autorização da loja e conexão =====
+    if (p === '/api/shopee' && req.method === 'GET') {
+      return sendJSON(res, 200, {
+        temApp: shpTemApp(), conectada: shpConectada(),
+        partnerId: shp.partnerId || '', temKey: !!shp.partnerKey,
+        shopId: shp.shopId || '', loja: shp.loja || '', regiao: shp.regiao || 'br',
+        redirect: (ML.redirectUri || '').replace(/\/callback$/, '') + '/callback-shopee',
+      });
+    }
+    if (p === '/api/shopee' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.partnerId != null) shp.partnerId = String(b.partnerId).trim();
+      if (b.partnerKey) shp.partnerKey = String(b.partnerKey).trim();
+      if (b.regiao) shp.regiao = String(b.regiao).trim();
+      shpSalvar();
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p === '/auth/shopee') {
+      if (!shpTemApp()) return sendJSON(res, 400, { error: 'Preencha Partner ID e Partner Key antes de conectar.' });
+      const base = (ML.redirectUri || '').replace(/\/callback$/, '') || `http://localhost:${PORT}`;
+      res.writeHead(302, { Location: shpLinkAutorizacao(base + '/callback-shopee') });
+      return res.end();
+    }
+    if (p === '/callback-shopee') {
+      const code = u.searchParams.get('code');
+      const shopId = u.searchParams.get('shop_id');
+      if (!code || !shopId) { res.writeHead(302, { Location: '/?shopee=erro' }); return res.end(); }
+      try {
+        await shpTrocarCode(code, shopId);
+        try {
+          const info = await shpApi('/api/v2/shop/get_shop_info');
+          shp.loja = (info.shop_name || (info.response || {}).shop_name || '') + '';
+          shpSalvar();
+        } catch { /* nome da loja é só enfeite */ }
+        res.writeHead(302, { Location: '/?shopee=ok' });
+      } catch (e) {
+        res.writeHead(302, { Location: '/?shopee=erro&msg=' + encodeURIComponent(String(e.message || e)) });
+      }
+      return res.end();
+    }
+    if (p === '/api/shopee/desconectar' && req.method === 'POST') {
+      shp = { partnerId: shp.partnerId, partnerKey: shp.partnerKey, shopId: '', accessToken: '', refreshToken: '', expiraEm: 0, regiao: shp.regiao, loja: '' };
+      shpSalvar();
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p === '/api/shopee/testar' && req.method === 'POST') {
+      if (!shpConectada()) return sendJSON(res, 200, { ok: false, erro: 'Conecte a loja primeiro.' });
+      try {
+        const info = await shpApi('/api/v2/shop/get_shop_info');
+        const nome = info.shop_name || (info.response || {}).shop_name || 'Shopee';
+        shp.loja = nome; shpSalvar();
+        return sendJSON(res, 200, { ok: true, loja: nome });
+      } catch (e) { return sendJSON(res, 200, { ok: false, erro: String(e.message || e) }); }
+    }
+
     // Diagnóstico: mostra o que cada endpoint da Amazon devolve, sem expor chaves
     // nem dados do comprador. Serve para achar o motivo quando algo não vem.
     if (p === '/api/amazon/diagnostico') {
@@ -1351,7 +1659,7 @@ const server = http.createServer(async (req, res) => {
       const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
       const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
       const conectadas = contasConectadas();
-      if (!conectadas.length && !amzConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
+      if (!conectadas.length && !amzConectada() && !shpConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
       // se o filtro pedir um canal específico, busca só nele
       const filtro = u.searchParams.get('canal');
       const alvo = ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : (filtro === 'amz' ? [] : conectadas);
@@ -1364,6 +1672,10 @@ const server = http.createServer(async (req, res) => {
       if (amzConectada() && (!filtro || filtro === 'all' || filtro === 'amz')) {
         try { sales = sales.concat(await amzListSales(from, to)); }
         catch (e) { erros.push('Amazon: ' + String(e.message || e)); }
+      }
+      if (shpConectada() && (!filtro || filtro === 'all' || filtro === 'shp')) {
+        try { sales = sales.concat(await shpListSales(from, to)); }
+        catch (e) { erros.push('Shopee: ' + String(e.message || e)); }
       }
       sales.sort((a, b) => new Date(b.data) - new Date(a.data));
       const semAssoc = sales.filter((s) => s.semAssoc).length;
