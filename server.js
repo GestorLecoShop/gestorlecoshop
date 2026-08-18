@@ -121,6 +121,8 @@ const CONTAS_ML = {
   ldmsc: { nome: 'LDM SC',        cor: '#00b8d9', env: 'ML_REFRESH_TOKEN_LDMSC' },
 };
 const ehContaML = (c) => Object.prototype.hasOwnProperty.call(CONTAS_ML, c);
+// Nome do canal para exibir no card da venda (Mercado Livre, LDM SC, Amazon...)
+const nomeCanal = (c) => (CONTAS_ML[c] && CONTAS_ML[c].nome) || (c === 'amz' ? 'Amazon' : 'Mercado Livre');
 
 // Em hospedagem o disco é temporário: se não há token salvo mas existe a variável
 // de ambiente correspondente, restaura a conexão daquela conta a partir dela.
@@ -378,19 +380,86 @@ async function amzLoja() {
   } catch { return 'Amazon'; }
 }
 
-// Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard
-async function amzBuildChannel(deISO, ateISO) {
-  // A lista de pedidos exige a permissão "Inventory and Order Tracking". Se o app
-  // só tiver "Finanças", seguimos apenas com os eventos financeiros — que já trazem
-  // pedido, SKU, quantidade, receita e todas as taxas.
+// Tipo de envio do pedido, como o Gestor Seller mostra:
+//   AFN = estoque na Amazon (FBA) · EasyShip = a Amazon coleta e entrega (DBA) · resto = envio próprio
+function amzEnvio(o) {
+  if (o.FulfillmentChannel === 'AFN') return 'fba';
+  if (o.EasyShipShipmentStatus) return 'dba';
+  return 'proprio';
+}
+
+// A Amazon lança as taxas alguns dias DEPOIS da venda. Se buscarmos o financeiro
+// só no mesmo período do pedido, vem faturamento sem taxa nenhuma. Por isso a
+// janela do financeiro começa antes e vai até agora.
+function janelaFinanceiro(deISO) {
+  const de = new Date(new Date(deISO).getTime() - 7 * 864e5).toISOString();
+  return { de, ate: new Date(Date.now() - 120000).toISOString() };
+}
+
+// Pedidos + taxas + itens, tudo que as telas precisam
+async function amzPedidosDetalhados(deISO, ateISO, comItens) {
   let pedidos = [];
   try { pedidos = await amzPedidos(deISO, ateISO); } catch { pedidos = []; }
-  const fin = await amzFinanceiro(deISO, ateISO);
+  const jan = janelaFinanceiro(deISO);
+  const fin = await amzFinanceiro(jan.de, jan.ate);
   if (!pedidos.length) {
     pedidos = Object.keys(fin).map((id) => ({
       AmazonOrderId: id, PurchaseDate: fin[id].data || deISO, OrderStatus: 'Shipped',
-    }));
+    })).filter((o) => o.PurchaseDate >= deISO && o.PurchaseDate <= ateISO);
   }
+  let itens = [];
+  if (comItens) {
+    itens = await emLotes(pedidos, 3, async (o) => {
+      try { return ((await amzApi('/orders/v0/orders/' + o.AmazonOrderId + '/orderItems')).payload || {}).OrderItems || []; }
+      catch { return []; }
+    });
+  }
+  return { pedidos, fin, itens };
+}
+
+// Vendas detalhadas da Amazon para a página "Vendas"
+async function amzListSales(deISO, ateISO) {
+  const { pedidos, fin, itens } = await amzPedidosDetalhados(deISO, ateISO, true);
+  const out = [];
+  let mudouPendentes = limparPendentes();
+  pedidos.forEach((o, i) => {
+    const f = fin[o.AmazonOrderId] || { itens: {} };
+    const lista = itens[i] || [];
+    const itemsRaw = (lista.length ? lista : Object.keys(f.itens).map((sku) => ({ SellerSKU: sku }))).map((it) => {
+      const skuBruto = it.SellerSKU || '';
+      const lf = f.itens[skuBruto] || {};
+      const qtd = it.QuantityOrdered || lf.qtd || 0;
+      const receita = lf.receita != null && lf.receita > 0
+        ? lf.receita
+        : Number(((it.ItemPrice || {}).Amount) || 0);
+      if (skuBruto && !temAssociacao(skuBruto)
+        && registrarPendente(skuBruto, it.Title || ('SKU ' + skuBruto + ' (Amazon)'), 'amz', o.PurchaseDate)) mudouPendentes = true;
+      return {
+        titulo: it.Title || skuBruto || '—',
+        chave: skuBruto,
+        anuncioId: it.ASIN || '',
+        sku: resolverSku(skuBruto),
+        associado: temAssociacao(skuBruto),
+        qtd,
+        unit: qtd ? receita / qtd : 0,
+        comissao: lf.taxas ? -lf.taxas : 0,
+        img: costs.fotos[resolverSku(skuBruto)] || '',
+      };
+    });
+    out.push(buildOrder({
+      id: o.AmazonOrderId, data: o.PurchaseDate, dataAprov: o.PurchaseDate,
+      status: String(o.OrderStatus || '').toLowerCase() === 'canceled' ? 'cancelled' : 'shipped',
+      envio: amzEnvio(o), pack: false,
+      itemsRaw, freteVend: 0, freteComp: (f.freteComprador || 0), descontos: 0, conta: 'amz',
+    }));
+  });
+  if (mudouPendentes) writeJSON(COSTS_FILE, costs);
+  return out;
+}
+
+// Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard
+async function amzBuildChannel(deISO, ateISO) {
+  const { pedidos, fin } = await amzPedidosDetalhados(deISO, ateISO, false);
 
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   let pedidosSemAssoc = 0, contados = 0;
@@ -735,7 +804,7 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
   const comissaoTot = soma('comissao');
   return {
     id: String(id), data, dataAprov: dataAprov || data, status,
-    canal: conta, marketplace: (CONTAS_ML[conta] || CONTAS_ML.ml).nome,
+    canal: conta, marketplace: nomeCanal(conta),
     semAssoc: itens.some((i) => i.associado === false),
     envio: envio || '', pack: !!pack,
     itens,
@@ -1244,15 +1313,19 @@ const server = http.createServer(async (req, res) => {
       const from = u.searchParams.get('from') || first.toISOString().slice(0, 19) + '.000-03:00';
       const to = u.searchParams.get('to') || now.toISOString().slice(0, 19) + '.000-03:00';
       const conectadas = contasConectadas();
-      if (!conectadas.length) return sendJSON(res, 200, { sales: demoSales(), demo: true });
+      if (!conectadas.length && !amzConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
       // se o filtro pedir um canal específico, busca só nele
       const filtro = u.searchParams.get('canal');
-      const alvo = ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : conectadas;
+      const alvo = ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : (filtro === 'amz' ? [] : conectadas);
       let sales = [];
       const erros = [];
       for (const conta of alvo) {
         try { sales = sales.concat(await mlListSales(from, to, conta)); }
         catch (e) { erros.push(`${CONTAS_ML[conta].nome}: ${String(e.message || e)}`); }
+      }
+      if (amzConectada() && (!filtro || filtro === 'all' || filtro === 'amz')) {
+        try { sales = sales.concat(await amzListSales(from, to)); }
+        catch (e) { erros.push('Amazon: ' + String(e.message || e)); }
       }
       sales.sort((a, b) => new Date(b.data) - new Date(a.data));
       const semAssoc = sales.filter((s) => s.semAssoc).length;
