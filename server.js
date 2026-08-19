@@ -89,7 +89,7 @@ let tokens = readJSON(TOKENS_FILE, {});          // { ml: { access_token, refres
 // Cada item: { nome, ean, imposto, custos: [ { desde:'YYYY-MM-DD', ate:null, custo, custoExtra } ] }
 function normalizeCosts(c) {
   c = c || {};
-  c.taxaPadrao = c.taxaPadrao != null ? c.taxaPadrao : 0.09;
+  c.taxaPadrao = c.taxaPadrao != null ? c.taxaPadrao : 0.06;
   c.itens = c.itens || {};
   // Anuncios do marketplace apontando para um produto interno.
   // Ex.: { "MLB123456": "KIT50X" } - a venda desse anuncio usa o custo do KIT50X.
@@ -111,7 +111,7 @@ function normalizeCosts(c) {
   }
   return c;
 }
-let costs = normalizeCosts(readJSON(COSTS_FILE, { taxaPadrao: 0.09, itens: {} }));
+let costs = normalizeCosts(readJSON(COSTS_FILE, { taxaPadrao: 0.06, itens: {} }));
 
 // ---------- Contas do Mercado Livre ----------
 // Várias contas ML no mesmo painel (ex.: matriz e filial). Cada uma vira um canal.
@@ -1383,7 +1383,7 @@ async function varrerPendentes(dias = 90) {
 // Retorna o custo vigente de um SKU na data da venda (histórico)
 function costFor(sku, dateISO) {
   const conf = costs.itens[sku] || {};
-  const taxa = conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.09);
+  const taxa = conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.06);
   const d = (dateISO || todayISO()).slice(0, 10);
   let best = null;
   for (const e of (conf.custos || [])) {
@@ -1417,7 +1417,7 @@ function upsertProduct(b) {
 // itens: [{ titulo, sku, qtd, unit, total, precoUnit, liquido, imposto, custo, custoExtra, lucro, margem, comissao }]
 // resumo: totais do pedido para a área expansível (estilo Gestor Seller)
 function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteVend, freteComp, descontos, conta = 'ml' }) {
-  const taxaPadrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.09;
+  const taxaPadrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.06;
   const totalProduto = itemsRaw.reduce((s, it) => s + it.unit * it.qtd, 0) || 1e-9;
   const itens = itemsRaw.map((it) => {
     const tp = it.unit * it.qtd;
@@ -1740,7 +1740,14 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/costs' && req.method === 'GET') return sendJSON(res, 200, costs);
     if (p === '/api/costs' && req.method === 'POST') {
       const b = await readBody(req);
-      if (b && b.taxaPadrao != null) { costs.taxaPadrao = b.taxaPadrao; writeJSON(COSTS_FILE, costs); }
+      let mudou = false;
+      if (b && b.taxaPadrao != null) { costs.taxaPadrao = b.taxaPadrao; mudou = true; }
+      // Tira a alíquota individual dos produtos e devolve todo mundo ao padrão
+      if (b && b.limparImpostoPorSku) {
+        for (const sku of Object.keys(costs.itens || {})) delete costs.itens[sku].imposto;
+        mudou = true;
+      }
+      if (mudou) writeJSON(COSTS_FILE, costs);
       return sendJSON(res, 200, { ok: true });
     }
     // ===== Amazon: credenciais e teste de conexão =====
@@ -2017,7 +2024,7 @@ const server = http.createServer(async (req, res) => {
         const cf = costFor(sku, hoje);
         return {
           sku, nome: conf.nome || '', ean: conf.ean || '',
-          imposto: conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.09),
+          imposto: conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.06),
           custo: cf.custo, custoExtra: cf.custoExtra, versoes: (conf.custos || []).length,
           img: costs.fotos[sku] || '',
         };
