@@ -597,7 +597,9 @@ function seloEnvio(envio){
   if(envio==='fulfillment') return `<span class="ship full" title="Mercado Envios Full — estoque no ML">${IC_RAIO}FULL</span>`;
   if(envio==='self_service') return `<span class="ship flex" title="Mercado Envios Flex — entrega no mesmo dia">${IC_CAMINHAO}FLEX</span>`;
   if(envio==='fba') return `<span class="ship fba" title="Fulfillment by Amazon — estoque na Amazon">${IC_RAIO}FBA</span>`;
+  if(envio==='fba_onsite') return `<span class="ship fba" title="FBA On Site — estoque seu, operação da Amazon">${IC_RAIO}FBA ON SITE</span>`;
   if(envio==='dba') return `<span class="ship dba" title="Delivery by Amazon — a Amazon coleta e entrega">${IC_CAMINHAO}DBA</span>`;
+  if(envio==='proprio_prioridade') return `<span class="ship dba" title="Logística própria com entrega prioritária">${IC_CAMINHAO}Própria prioridade</span>`;
   if(envio==='proprio') return `<span class="ship outro" title="Você mesmo envia">${IC_CAMINHAO}Envio próprio</span>`;
   if(envio==='shopee_full') return `<span class="ship shopee" title="Shopee Full — estoque na Shopee">${IC_RAIO}SHOPEE FULL</span>`;
   if(envio==='shopee_envios') return `<span class="ship shopee" title="Envio pela Shopee">${IC_CAMINHAO}Shopee Envios</span>`;
@@ -615,6 +617,7 @@ function cabecalhoVenda(o){
     <span class="ord-date">${IC_HORA}${fmtHora(o.data)}</span>
     ${seloEnvio(o.envio)}
     ${o.pack?`<span class="pack" title="Vários pedidos enviados juntos">${IC_PACOTE}Pacote</span>`:''}
+    ${o.semPreco?'<span class="ship alerta" title="A Amazon ainda não liberou o valor deste pedido — fora das contas">sem valor</span>':''}
     ${o.taxaPendente?'<span class="ship alerta" title="A Amazon ainda não lançou as taxas deste pedido — o lucro está otimista">taxa pendente</span>':''}
     ${o.semAssoc?'<span class="ship alerta" title="Anúncio sem produto associado — fora das contas">sem produto</span>':''}
     <span class="ord-mp">${o.marketplace}</span>
