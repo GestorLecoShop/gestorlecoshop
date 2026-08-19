@@ -385,7 +385,10 @@ async function amzFinanceiro(deISO, ateISO) {
     for (const s of (ev.ShipmentEventList || [])) {
       const id = s.AmazonOrderId;
       if (!id) continue;
-      const alvo = porPedido[id] || (porPedido[id] = { comissao: 0, fba: 0, outras: 0, data: '', itens: {} });
+      const alvo = porPedido[id] || (porPedido[id] = {
+        comissao: 0, fba: 0, outras: 0, data: '', itens: {},
+        fretePedido: 0, taxasPedido: 0, freteComprador: 0,
+      });
       if (s.PostedDate && (!alvo.data || s.PostedDate < alvo.data)) alvo.data = s.PostedDate;
       for (const it of (s.ShipmentItemList || [])) {
         const sku = it.SellerSKU || '';
@@ -393,9 +396,11 @@ async function amzFinanceiro(deISO, ateISO) {
         linha.qtd += it.QuantityShipped || 0;
         for (const c of (it.ItemChargeList || [])) {
           const v = ((c.ChargeAmount || {}).CurrencyAmount) || 0;
+          // O comprador pagou preço + imposto, e a Amazon repassa os dois ao vendedor.
+          // Somar só o Principal cortava ~35% do faturamento nos pedidos FBA.
           if (c.ChargeType === 'Principal') linha.receita += v;
-          else if (c.ChargeType === 'Tax') linha.imposto += v;
-          else if (String(c.ChargeType || '').includes('Shipping')) linha.frete += v;
+          else if (c.ChargeType === 'Tax') { linha.receita += v; linha.imposto += v; }
+          else if (String(c.ChargeType || '').includes('Shipping')) { linha.frete += v; alvo.freteComprador += v; }
           else linha.receita += v;
         }
         for (const f of (it.ItemFeeList || [])) {
@@ -404,6 +409,15 @@ async function amzFinanceiro(deISO, ateISO) {
           if (f.FeeType === 'Commission') alvo.comissao += v;
           else if (String(f.FeeType || '').startsWith('FBA')) alvo.fba += v;
           else alvo.outras += v;
+        }
+      }
+      // Taxas do pedido (não do item): é aqui que mora o frete do DBA/Easy Ship.
+      // Ignorar estas duas listas deixava o frete pago pelo vendedor sempre zerado.
+      for (const lista of [s.ShipmentFeeList, s.ShipmentFeeAdjustmentList, s.OrderFeeList, s.OrderFeeAdjustmentList]) {
+        for (const f of (lista || [])) {
+          const v = Math.abs(((f.FeeAmount || {}).CurrencyAmount) || 0);
+          if (/ship|postage|delivery|frete/i.test(String(f.FeeType || ''))) alvo.fretePedido += v;
+          else alvo.taxasPedido += v;
         }
       }
     }
@@ -424,11 +438,14 @@ async function amzLoja() {
   } catch { return 'Amazon'; }
 }
 
-// Tipo de envio do pedido, como o Gestor Seller mostra:
-//   AFN = estoque na Amazon (FBA) · EasyShip = a Amazon coleta e entrega (DBA) · resto = envio próprio
+// Tipo de envio do pedido, com as mesmas cinco modalidades que o Gestor Seller usa:
+//   AFN com origem própria = FBA On Site · AFN = estoque na Amazon (FBA)
+//   EasyShip = a Amazon coleta e entrega (DBA) · Priority/Premium = própria prioridade
 function amzEnvio(o) {
-  if (o.FulfillmentChannel === 'AFN') return 'fba';
+  if (o.FulfillmentChannel === 'AFN') return o.SupplySourceId ? 'fba_onsite' : 'fba';
   if (o.EasyShipShipmentStatus) return 'dba';
+  const cat = String(o.ShipmentServiceLevelCategory || '');
+  if (o.IsPremiumOrder || cat === 'Priority' || cat === 'Expedited') return 'proprio_prioridade';
   return 'proprio';
 }
 
@@ -441,39 +458,106 @@ function janelaFinanceiro(deISO) {
 }
 
 // Pedidos + taxas + itens, tudo que as telas precisam
-// A mesma leitura serve ao painel e à página de vendas. Guardamos por 2 minutos
-// para não gastar a cota da Amazon duas vezes na mesma consulta.
-const amzCache = new Map();
+// ===== Armazém local dos pedidos da Amazon =====
+// A Amazon libera 1 chamada de getOrders por minuto e 1 de getOrderItems a cada
+// 2 segundos. Consultar a API a cada abertura de tela estoura a cota e devolve
+// dado pela metade. Então um sincronizador roda em segundo plano, guarda tudo em
+// disco, e as telas leem do arquivo — abrem na hora e a venda aparece em menos
+// de um minuto.
+const AMZ_DB_FILE = path.join(DATA_DIR, 'amazon-db.json');
+let amzDB = readJSON(AMZ_DB_FILE, {});
+amzDB = { pedidos: {}, itens: {}, fin: {}, ultimaSync: '', ultimaFin: '', ...amzDB };
+let amzDBsujo = false;
+const amzFila = [];          // pedidos esperando os itens
+let amzCiclando = false;
+let amzErroSync = '';
 
-async function amzPedidosDetalhados(deISO, ateISO, comItens) {
-  const chave = deISO + '|' + ateISO + '|' + (comItens ? 1 : 0);
-  const avisoDe = (f) => (f && f.length ? 'leitura incompleta em ' + f.length + ' período(s) — ' + f[0] : '');
-  const guardado = amzCache.get(chave);
-  if (guardado && Date.now() - guardado.em < 120000) {
-    amzAviso = avisoDe(guardado.dados.falhas);
-    return guardado.dados;
+function amzGuardar() {
+  if (!amzDBsujo) return;
+  writeJSON(AMZ_DB_FILE, amzDB);
+  amzDBsujo = false;
+}
+
+// Só o que mudou desde a última passada (LastUpdatedAfter), 1 chamada por minuto
+async function amzSyncPedidos() {
+  const desde = amzDB.ultimaSync || new Date(Date.now() - 45 * 864e5).toISOString();
+  const marca = new Date(Date.now() - 120000).toISOString();
+  let proximo = '';
+  for (let i = 0; i < 20; i++) {
+    const q = new URLSearchParams({ MarketplaceIds: amz.marketplaceId });
+    if (proximo) q.set('NextToken', proximo);
+    else { q.set('LastUpdatedAfter', desde); q.set('MaxResultsPerPage', '100'); }
+    const p = (await amzApi('/orders/v0/orders?' + q.toString())).payload || {};
+    for (const o of (p.Orders || [])) {
+      amzDB.pedidos[o.AmazonOrderId] = o;
+      amzDBsujo = true;
+      if (!amzDB.itens[o.AmazonOrderId] && !amzFila.includes(o.AmazonOrderId)) amzFila.push(o.AmazonOrderId);
+    }
+    proximo = p.NextToken || '';
+    if (!proximo) break;
+    await esperar(61000);   // getOrders: 0,0167 req/s
   }
+  amzDB.ultimaSync = marca;
+  amzDBsujo = true;
+}
 
-  const { pedidos, falhas } = await amzPedidos(deISO, ateISO);
-  // Nunca montamos pedidos a partir do extrato financeiro: data, status e tipo de
-  // envio só existem no pedido. O extrato traria a data do repasse, todo pedido
-  // como "enviado" e todo envio como "próprio" — número errado com cara de certo.
-  if (!pedidos.length && falhas.length) throw new Error('não consegui ler os pedidos — ' + falhas[0]);
-  amzAviso = avisoDe(falhas);
-
-  const jan = janelaFinanceiro(deISO);
-  const fin = await amzFinanceiro(jan.de, jan.ate);
-  let itens = [];
-  if (comItens) {
-    itens = await emLotes(pedidos, 2, async (o) => {
-      try { return ((await amzApi('/orders/v0/orders/' + o.AmazonOrderId + '/orderItems')).payload || {}).OrderItems || []; }
-      catch { return []; }
-    });
+// Itens dos pedidos novos, respeitando 0,5 req/s
+async function amzSyncItens() {
+  for (let n = 0; n < 20 && amzFila.length; n++) {
+    const id = amzFila.shift();
+    try {
+      const r = (await amzApi('/orders/v0/orders/' + id + '/orderItems')).payload || {};
+      amzDB.itens[id] = r.OrderItems || [];
+      amzDBsujo = true;
+    } catch (e) {
+      if (/429|throttl|quota/i.test(String(e.message || ''))) { amzFila.unshift(id); break; }
+    }
+    await esperar(2200);
   }
-  const dados = { pedidos, fin, itens, falhas };
-  amzCache.set(chave, { em: Date.now(), dados });
-  if (amzCache.size > 24) amzCache.delete(amzCache.keys().next().value);
-  return dados;
+}
+
+// Taxas: o extrato demora dias para fechar, então revisamos uma janela larga
+async function amzSyncFinanceiro() {
+  const de = new Date(Date.now() - 40 * 864e5).toISOString();
+  const ate = new Date(Date.now() - 120000).toISOString();
+  const fin = await amzFinanceiro(de, ate);
+  Object.assign(amzDB.fin, fin);
+  amzDB.ultimaFin = ate;
+  amzDBsujo = true;
+}
+
+async function amzCiclo() {
+  if (amzCiclando || !amzConectada()) return;
+  amzCiclando = true;
+  try {
+    await amzSyncPedidos();
+    await amzSyncItens();
+    const venceu = !amzDB.ultimaFin || (Date.now() - new Date(amzDB.ultimaFin).getTime()) > 15 * 60000;
+    if (venceu) await amzSyncFinanceiro();
+    amzErroSync = '';
+  } catch (e) {
+    amzErroSync = String(e.message || e);
+  }
+  amzGuardar();
+  amzCiclando = false;
+}
+setInterval(amzCiclo, 60000);
+setTimeout(amzCiclo, 8000);
+
+// Leitura instantânea, direto do arquivo — nenhuma chamada à Amazon aqui
+async function amzPedidosDetalhados(deISO, ateISO) {
+  const de = new Date(deISO).getTime();
+  const ate = new Date(ateISO).getTime();
+  const pedidos = Object.keys(amzDB.pedidos)
+    .map((id) => amzDB.pedidos[id])
+    .filter((o) => { const t = new Date(o.PurchaseDate).getTime(); return t >= de && t <= ate; })
+    .sort((a, b) => new Date(b.PurchaseDate) - new Date(a.PurchaseDate));
+  const itens = pedidos.map((o) => amzDB.itens[o.AmazonOrderId] || []);
+  const total = Object.keys(amzDB.pedidos).length;
+  amzAviso = amzErroSync ? ('sincronia com erro — ' + amzErroSync)
+    : (!total ? 'primeira sincronia em andamento, aguarde alguns minutos'
+      : (amzFila.length ? amzFila.length + ' pedido(s) ainda buscando os itens' : ''));
+  return { pedidos, fin: amzDB.fin, itens };
 }
 
 // Vendas detalhadas da Amazon para a página "Vendas"
@@ -489,9 +573,12 @@ async function amzListSales(deISO, ateISO) {
       const skuBruto = it.SellerSKU || '';
       const lf = f.itens[skuBruto] || {};
       const qtd = it.QuantityOrdered || lf.qtd || 0;
-      const receita = lf.receita != null && lf.receita > 0
-        ? lf.receita
-        : Number(((it.ItemPrice || {}).Amount) || 0);
+      // ItemPrice vem SEM o imposto e o imposto vem à parte em ItemTax. O comprador
+      // pagou os dois e a Amazon repassa os dois — somar só o ItemPrice cortava
+      // cerca de 35% do faturamento em todo pedido FBA.
+      const precoDoPedido = Number(((it.ItemPrice || {}).Amount) || 0)
+        + Number(((it.ItemTax || {}).Amount) || 0);
+      const receita = lf.receita != null && lf.receita > 0 ? lf.receita : precoDoPedido;
       if (skuBruto && !temAssociacao(skuBruto)
         && registrarPendente(skuBruto, it.Title || ('SKU ' + skuBruto + ' (Amazon)'), 'amz', o.PurchaseDate)) mudouPendentes = true;
       return {
@@ -513,97 +600,65 @@ async function amzListSales(deISO, ateISO) {
       const qt = itemsRaw.reduce((s, i) => s + i.qtd, 0) || 1;
       itemsRaw.forEach((i) => { i.unit = totalPedido / qt; });
     }
-    // Sem preço em lugar nenhum (pedido ainda pendente na Amazon): não dá para
-    // medir. Melhor deixar de fora do que mostrar lucro negativo por aplicar
-    // custo sobre receita zero — mas avisamos quantos ficaram de fora.
-    if (!itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0)) { semPreco++; return; }
+    // Pedido ainda sem preço liberado pela Amazon: em vez de sumir da lista, entra
+    // com valor zero e um selo. Some era pior — a venda simplesmente não existia.
+    const temPreco = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) > 0;
+    if (!temPreco) semPreco++;
+    // Taxas lançadas no pedido (não no item): rateamos junto da comissão
+    const taxasDoPedido = (f.taxasPedido || 0);
+    if (taxasDoPedido) {
+      const base = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
+      itemsRaw.forEach((i) => { i.comissao += taxasDoPedido * ((i.unit * i.qtd) / base); });
+    }
     const st = String(o.OrderStatus || '').toLowerCase();
     const pedido = buildOrder({
       id: o.AmazonOrderId, data: o.PurchaseDate, dataAprov: o.PurchaseDate,
       status: st === 'canceled' ? 'cancelled' : (st === 'pending' ? 'pending' : 'shipped'),
       envio: amzEnvio(o), pack: false,
-      itemsRaw, freteVend: 0, freteComp: (f.freteComprador || 0), descontos: 0, conta: 'amz',
+      itemsRaw,
+      freteVend: (f.fretePedido || 0),          // frete do DBA/Easy Ship, pago pelo vendedor
+      freteComp: (f.freteComprador || 0), descontos: 0, conta: 'amz',
     });
     // A Amazon lança as taxas dias depois da venda. Enquanto não lança, o lucro
     // do pedido está otimista — marcamos para não confundir com número fechado.
     pedido.taxaPendente = !fin[o.AmazonOrderId];
+    pedido.semPreco = !temPreco;
     out.push(pedido);
   });
   if (semPreco) {
     amzAviso = (amzAviso ? amzAviso + ' · ' : '')
-      + semPreco + ' pedido(s) sem preço ainda na Amazon ficaram de fora';
+      + semPreco + ' pedido(s) ainda sem preço liberado pela Amazon';
   }
   if (mudouPendentes) writeJSON(COSTS_FILE, costs);
   return out;
 }
 
-// Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard
+// Monta o canal Amazon (mesma estrutura do Mercado Livre) para o dashboard.
+// Soma as próprias vendas para que painel e página de vendas nunca divirjam.
 async function amzBuildChannel(deISO, ateISO) {
-  const { pedidos, fin, itens } = await amzPedidosDetalhados(deISO, ateISO, true);
+  const vendas = await amzListSales(deISO, ateISO);
   let semTaxa = 0;
-
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   let pedidosSemAssoc = 0, contados = 0;
   const bySku = {};
-  let mudouPendentes = limparPendentes();
 
-  pedidos.forEach((o, idx) => {
-    if (String(o.OrderStatus) === 'Canceled') return;
-    let f = fin[o.AmazonOrderId];
-    // A Amazon só lança as taxas alguns dias depois. Enquanto isso, usamos os itens
-    // do pedido para aplicar custo e imposto (que são nossos) e marcamos a taxa como
-    // pendente — melhor do que mostrar lucro cheio, sem taxa nenhuma.
-    if (!f) {
-      const lista = itens[idx] || [];
-      if (!lista.length) {
-        fat += Number(((o.OrderTotal || {}).Amount) || 0);
-        contados++; semTaxa++;
-        return;
-      }
-      semTaxa++;
-      f = { itens: {} };
-      for (const it of lista) {
-        const sku = it.SellerSKU || '';
-        const linha = f.itens[sku] || (f.itens[sku] = { qtd: 0, receita: 0, imposto: 0, frete: 0, taxas: 0 });
-        linha.qtd += it.QuantityOrdered || 0;
-        linha.receita += Number(((it.ItemPrice || {}).Amount) || 0);
-      }
-      // Em pedido ainda pendente a Amazon esconde o preço do item; usamos o total
-      // do pedido, rateado pela quantidade, para não ficar com receita zero.
-      const somaR = Object.keys(f.itens).reduce((s, k) => s + f.itens[k].receita, 0);
-      const totalPedido = Number(((o.OrderTotal || {}).Amount) || 0);
-      if (!somaR && totalPedido) {
-        const qt = Object.keys(f.itens).reduce((s, k) => s + f.itens[k].qtd, 0) || 1;
-        for (const k of Object.keys(f.itens)) f.itens[k].receita = totalPedido * (f.itens[k].qtd / qt);
-      }
-      // sem preço em lugar nenhum: fica de fora até a Amazon liberar os valores
-      if (!Object.keys(f.itens).reduce((s, k) => s + f.itens[k].receita, 0)) return;
-    }
-    let semAssoc = false;
-    for (const sku of Object.keys(f.itens)) {
-      if (temAssociacao(sku)) continue;
-      semAssoc = true;
-      if (registrarPendente(sku, 'SKU ' + sku + ' (Amazon)', 'amz', o.PurchaseDate)) mudouPendentes = true;
-    }
-    if (semAssoc) { pedidosSemAssoc++; return; }
+  for (const v of vendas) {
+    if (v.status === 'cancelled') continue;
+    if (v.semPreco) continue;                    // sem valor liberado, não dá para medir
+    if (v.semAssoc) { pedidosSemAssoc++; continue; }
+    if (v.taxaPendente) semTaxa++;
     contados++;
-    for (const skuBruto of Object.keys(f.itens)) {
-      const linha = f.itens[skuBruto];
-      const sku = resolverSku(skuBruto) || 'SEM_SKU';
-      const cf = costFor(sku, o.PurchaseDate);
-      const custoItem = (cf.custo + cf.custoExtra) * linha.qtd;
-      const impostoItem = linha.receita * cf.imposto;
-      fat += linha.receita + linha.frete;
-      comissao += -linha.taxas;                  // as taxas vêm negativas
-      custoProdutos += custoItem;
-      imposto += impostoItem;
-      const b = bySku[sku] || (bySku[sku] = { nome: cf.nome || sku, un: 0, fat: 0, comissao: 0, custo: 0, imposto: 0 });
-      b.un += linha.qtd; b.fat += linha.receita + linha.frete;
-      b.comissao += -linha.taxas; b.custo += custoItem; b.imposto += impostoItem;
+    fat += v.resumo.total;
+    comissao += v.resumo.comissao;
+    freteVendedor += v.resumo.freteVend;
+    custoProdutos += v.resumo.custo + v.resumo.custoExtra;
+    imposto += v.resumo.imposto;
+    for (const it of v.itens) {
+      const b = bySku[it.sku] || (bySku[it.sku] = { nome: it.titulo, un: 0, fat: 0, comissao: 0, custo: 0, imposto: 0 });
+      b.un += it.qtd; b.fat += it.total;
+      b.comissao += it.comissao; b.custo += it.custo + it.custoExtra; b.imposto += it.imposto;
     }
-  });
-
-  if (mudouPendentes) writeJSON(COSTS_FILE, costs);
+  }
 
   const liq = fat - comissao - freteVendedor;
   const lb = liq - custoProdutos - imposto;
