@@ -875,11 +875,15 @@ async function shpEscrow(sns) {
 const shpEnvio = (o) => (String(o.fulfillment_flag || '').includes('shopee') ? 'shopee_full' : 'shopee_envios');
 
 // Vendas detalhadas da Shopee para a página "Vendas"
+// Aviso do canal Shopee: aparece na tela quando a conferência com o repasse falha
+let shpAviso = '';
+
 async function shpListSales(deISO, ateISO) {
   const sns = await shpPedidos(deISO, ateISO);
   if (!sns.length) return [];
   const [detalhes, escrow] = await Promise.all([shpDetalhes(sns), shpEscrow(sns)]);
   const out = [];
+  let desvios = 0;
   let mudouPendentes = limparPendentes();
   for (const o of detalhes) {
     const inc = escrow[o.order_sn] || {};
@@ -900,31 +904,49 @@ async function shpListSales(deISO, ateISO) {
         img: (it.image_info && it.image_info.image_url) || costs.fotos[resolverSku(sku)] || '',
       };
     });
-    // as taxas da Shopee vêm no total do pedido, não por item: rateamos pelo valor
-    const freteVend = Math.max(0, (inc.actual_shipping_fee || 0) - (inc.shopee_shipping_rebate || 0) - (inc.buyer_paid_shipping_fee || 0));
-    const somaItens = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
+    // Frete tem três pernas e elas se anulam: o comprador paga uma parte, a Shopee
+    // subsidia outra e o parceiro logístico cobra o total. O que sobra é do vendedor
+    // — e pode ser negativo (subsídio maior que a conta), então nada de max(0).
+    const freteVend = (inc.actual_shipping_fee || 0) - (inc.shopee_shipping_rebate || 0) - (inc.buyer_paid_shipping_fee || 0);
+    let somaItens = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
     // Somar taxa por taxa deixa de fora qualquer cobrança nova que a Shopee criar
     // (foi assim que a de suporte técnico passou batido). O repasse é a verdade:
     // o que ela deixa de pagar sobre o preço de venda é taxa.
-    const venda = inc.order_selling_price != null ? inc.order_selling_price : somaItens;
+    // A Shopee liquida sobre o preço do PEDIDO. Somar o preço item a item dava um
+    // valor maior, e a diferença virava lucro que não existe. Reescalamos os itens
+    // para fecharem no valor do pedido.
+    const venda = (inc.order_selling_price > 0) ? inc.order_selling_price : somaItens;
+    if (venda > 0 && somaItens > 0 && Math.abs(venda - somaItens) > 0.005) {
+      const fator = venda / somaItens;
+      itemsRaw.forEach((i) => { i.unit = i.unit * fator; });
+      somaItens = venda;
+    }
     const taxasSomadas = (inc.commission_fee || 0) + (inc.service_fee || 0) + (inc.seller_transaction_fee || 0)
       + (inc.order_ams_commission_fee || 0) + (inc.campaign_fee || 0) + (inc.seller_order_processing_fee || 0)
       + (inc.ads_escrow_top_up_fee_or_technical_support_fee || 0);
-    const taxaTotal = (inc.escrow_amount > 0 && venda > 0)
-      ? Math.max(0, venda - inc.escrow_amount - freteVend)
-      : taxasSomadas;
+    const temRepasse = inc.escrow_amount != null && venda > 0;
+    const taxaTotal = temRepasse ? (venda - inc.escrow_amount - freteVend) : taxasSomadas;
     itemsRaw.forEach((i) => { i.comissao = taxaTotal * ((i.unit * i.qtd) / somaItens); });
-    out.push(buildOrder({
+    const pedido = buildOrder({
       id: o.order_sn, data: new Date((o.create_time || 0) * 1000).toISOString(),
       dataAprov: new Date((o.pay_time || o.create_time || 0) * 1000).toISOString(),
       status: String(o.order_status || '').toUpperCase() === 'CANCELLED' ? 'cancelled' : 'shipped',
       envio: shpEnvio(o), pack: false,
       itemsRaw, freteVend, freteComp: (inc.buyer_paid_shipping_fee || 0),
-      // seller_discount é a diferença entre preço de tabela e preço de venda —
-      // já está embutida no valor vendido. Só o cupom do vendedor sai do bolso.
-      descontos: (inc.voucher_from_seller || 0), conta: 'shp',
-    }));
+      // Cupom do vendedor, ajuste PIX e afins já saem de dentro do repasse — lançar
+      // de novo aqui seria cobrar duas vezes do mesmo bolso.
+      descontos: 0, conta: 'shp',
+    });
+    pedido.repasse = temRepasse ? round2(inc.escrow_amount) : null;
+    pedido.taxaPendente = !temRepasse;
+    // Conferência obrigatória: o líquido calculado tem que ser igual, ao centavo,
+    // ao que a Shopee libera. Se divergir, falta uma linha — não é arredondamento.
+    if (temRepasse && Math.abs(pedido.resumo.liquido - inc.escrow_amount) > 0.01) desvios++;
+    out.push(pedido);
   }
+  shpAviso = desvios
+    ? (desvios + ' pedido(s) com líquido diferente do repasse da Shopee — confira')
+    : '';
   if (mudouPendentes) writeJSON(COSTS_FILE, costs);
   return out;
 }
@@ -935,8 +957,14 @@ async function shpBuildChannel(deISO, ateISO) {
   let fat = 0, comissao = 0, freteVendedor = 0, custoProdutos = 0, imposto = 0;
   let pedidosSemAssoc = 0, contados = 0;
   const bySku = {};
+  let estornos = 0;
   for (const v of vendas) {
-    if (v.status === 'cancelled') continue;
+    if (v.status === 'cancelled') {
+      // Pedido cancelado ou devolvido costuma vir com repasse negativo: é dinheiro
+      // saindo de verdade. Ignorar isso inflava o lucro do mês.
+      if (v.repasse != null && v.repasse < 0) estornos += v.repasse;
+      continue;
+    }
     if (v.semAssoc) { pedidosSemAssoc++; continue; }
     contados++;
     fat += v.resumo.total;
@@ -949,8 +977,10 @@ async function shpBuildChannel(deISO, ateISO) {
       b.un += it.qtd; b.fat += it.total; b.lucro += it.lucro;
     }
   }
-  const liq = fat - comissao - freteVendedor;
+  const liq = fat - comissao - freteVendedor + estornos;   // estornos vêm negativos
   const lb = liq - custoProdutos - imposto;
+  const taxas = [['Comissão e taxas Shopee', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]];
+  if (estornos) taxas.push(['Estornos de pedidos cancelados', round2(estornos)]);
   return {
     channel: {
       nome: 'Shopee', cor: '#ee4d2d',
@@ -959,7 +989,7 @@ async function shpBuildChannel(deISO, ateISO) {
     },
     dreDetail: {
       fat: round2(fat),
-      taxas: [['Comissão e taxas Shopee', -round2(comissao)], ['Frete pago pelo vendedor', -round2(freteVendedor)]],
+      taxas,
       liq: round2(liq),
       custos: [['Custo dos produtos', -round2(custoProdutos)], ['Impostos', -round2(imposto)]],
       lb: round2(lb),
@@ -2220,8 +2250,11 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { erros.push('Amazon: ' + String(e.message || e)); }
       }
       if (shpConectada() && (!filtro || filtro === 'all' || filtro === 'shp')) {
-        try { sales = sales.concat(await shpListSales(from, to)); }
-        catch (e) { erros.push('Shopee: ' + String(e.message || e)); }
+        shpAviso = '';
+        try {
+          sales = sales.concat(await shpListSales(from, to));
+          if (shpAviso) erros.push('Shopee: ' + shpAviso);
+        } catch (e) { erros.push('Shopee: ' + String(e.message || e)); }
       }
       if (ttkConectada() && (!filtro || filtro === 'all' || filtro === 'tik')) {
         try { sales = sales.concat(await ttkListSales(from, to)); }
