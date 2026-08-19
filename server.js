@@ -1768,6 +1768,19 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ips, detalhe: achados });
     }
 
+    // Diagnóstico: um pedido cru, exatamente como veio da Amazon, para conferir
+    // campo a campo quando algum número não bate.
+    if (p === '/api/amazon/pedido') {
+      const id = u.searchParams.get('id') || '';
+      const achado = Object.keys(amzDB.pedidos).find((k) => k.endsWith(id));
+      if (!achado) return sendJSON(res, 200, { erro: 'não encontrei esse pedido', guardados: Object.keys(amzDB.pedidos).length });
+      return sendJSON(res, 200, {
+        pedido: amzDB.pedidos[achado],
+        itens: amzDB.itens[achado] || [],
+        financeiro: amzDB.fin[achado] || null,
+      });
+    }
+
     // ===== TikTok Shop =====
     if (p === '/api/tiktok' && req.method === 'GET') {
       return sendJSON(res, 200, {
