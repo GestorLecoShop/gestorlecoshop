@@ -901,18 +901,28 @@ async function shpListSales(deISO, ateISO) {
       };
     });
     // as taxas da Shopee vêm no total do pedido, não por item: rateamos pelo valor
-    const taxaTotal = (inc.commission_fee || 0) + (inc.service_fee || 0) + (inc.seller_transaction_fee || 0)
-      + (inc.order_ams_commission_fee || 0) + (inc.campaign_fee || 0) + (inc.seller_order_processing_fee || 0);
-    const somaItens = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
-    itemsRaw.forEach((i) => { i.comissao = taxaTotal * ((i.unit * i.qtd) / somaItens); });
     const freteVend = Math.max(0, (inc.actual_shipping_fee || 0) - (inc.shopee_shipping_rebate || 0) - (inc.buyer_paid_shipping_fee || 0));
+    const somaItens = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
+    // Somar taxa por taxa deixa de fora qualquer cobrança nova que a Shopee criar
+    // (foi assim que a de suporte técnico passou batido). O repasse é a verdade:
+    // o que ela deixa de pagar sobre o preço de venda é taxa.
+    const venda = inc.order_selling_price != null ? inc.order_selling_price : somaItens;
+    const taxasSomadas = (inc.commission_fee || 0) + (inc.service_fee || 0) + (inc.seller_transaction_fee || 0)
+      + (inc.order_ams_commission_fee || 0) + (inc.campaign_fee || 0) + (inc.seller_order_processing_fee || 0)
+      + (inc.ads_escrow_top_up_fee_or_technical_support_fee || 0);
+    const taxaTotal = (inc.escrow_amount > 0 && venda > 0)
+      ? Math.max(0, venda - inc.escrow_amount - freteVend)
+      : taxasSomadas;
+    itemsRaw.forEach((i) => { i.comissao = taxaTotal * ((i.unit * i.qtd) / somaItens); });
     out.push(buildOrder({
       id: o.order_sn, data: new Date((o.create_time || 0) * 1000).toISOString(),
       dataAprov: new Date((o.pay_time || o.create_time || 0) * 1000).toISOString(),
       status: String(o.order_status || '').toUpperCase() === 'CANCELLED' ? 'cancelled' : 'shipped',
       envio: shpEnvio(o), pack: false,
       itemsRaw, freteVend, freteComp: (inc.buyer_paid_shipping_fee || 0),
-      descontos: (inc.voucher_from_seller || 0) + (inc.seller_discount || 0), conta: 'shp',
+      // seller_discount é a diferença entre preço de tabela e preço de venda —
+      // já está embutida no valor vendido. Só o cupom do vendedor sai do bolso.
+      descontos: (inc.voucher_from_seller || 0), conta: 'shp',
     }));
   }
   if (mudouPendentes) writeJSON(COSTS_FILE, costs);
