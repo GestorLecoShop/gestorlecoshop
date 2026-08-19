@@ -578,7 +578,9 @@ async function amzListSales(deISO, ateISO) {
       // cerca de 35% do faturamento em todo pedido FBA.
       const precoDoPedido = Number(((it.ItemPrice || {}).Amount) || 0)
         + Number(((it.ItemTax || {}).Amount) || 0);
-      const receita = lf.receita != null && lf.receita > 0 ? lf.receita : precoDoPedido;
+      // O pedido manda o preço cheio; o extrato manda só o Principal, sem imposto.
+      // Por isso o pedido vem primeiro e o extrato fica de reserva.
+      const receita = precoDoPedido > 0 ? precoDoPedido : (lf.receita || 0);
       if (skuBruto && !temAssociacao(skuBruto)
         && registrarPendente(skuBruto, it.Title || ('SKU ' + skuBruto + ' (Amazon)'), 'amz', o.PurchaseDate)) mudouPendentes = true;
       return {
