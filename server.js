@@ -1850,6 +1850,16 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // Diagnóstico: repasse cru de um pedido da Shopee, para conferir campo a campo
+    if (p === '/api/shopee/pedido') {
+      const sn = u.searchParams.get('id') || '';
+      if (!shpConectada()) return sendJSON(res, 200, { erro: 'Shopee não conectada' });
+      try {
+        const [det, esc] = await Promise.all([shpDetalhes([sn]), shpEscrow([sn])]);
+        return sendJSON(res, 200, { detalhe: (det || [])[0] || null, repasse: esc[sn] || null });
+      } catch (e) { return sendJSON(res, 200, { erro: String(e.message || e) }); }
+    }
+
     // ===== TikTok Shop =====
     if (p === '/api/tiktok' && req.method === 'GET') {
       return sendJSON(res, 200, {
