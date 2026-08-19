@@ -421,6 +421,23 @@ async function amzFinanceiro(deISO, ateISO) {
         }
       }
     }
+    // Taxas de serviço vêm numa lista à parte do envio. É aqui que a Amazon
+    // lança a postagem do DBA/Easy Ship — fora do ShipmentEvent.
+    for (const sv of (ev.ServiceFeeEventList || [])) {
+      const id = sv.AmazonOrderId;
+      if (!id) continue;
+      const alvo = porPedido[id] || (porPedido[id] = {
+        comissao: 0, fba: 0, outras: 0, data: '', itens: {},
+        fretePedido: 0, taxasPedido: 0, freteComprador: 0,
+      });
+      const motivo = String(sv.FeeReason || '') + ' ' + String(sv.FeeDescription || '');
+      for (const f of (sv.FeeList || [])) {
+        const v = Math.abs(((f.FeeAmount || {}).CurrencyAmount) || 0);
+        const tipo = String(f.FeeType || '') + ' ' + motivo;
+        if (/ship|postage|delivery|frete|easy/i.test(tipo)) alvo.fretePedido += v;
+        else alvo.taxasPedido += v;
+      }
+    }
     proximo = ev.NextToken || (j.payload || {}).NextToken || '';
     if (!proximo) break;
     await esperar(600);
@@ -1786,6 +1803,27 @@ const server = http.createServer(async (req, res) => {
       }
       const ips = [...new Set(achados.map((a) => a.ip).filter(Boolean))];
       return sendJSON(res, 200, { ips, detalhe: achados });
+    }
+
+    // Diagnóstico: quais listas de evento financeiro a Amazon realmente manda,
+    // e como é uma taxa de serviço por dentro. Serve para achar onde mora o
+    // frete do DBA sem ficar chutando.
+    if (p === '/api/amazon/eventos') {
+      const de = new Date(Date.now() - 20 * 864e5).toISOString();
+      const ate = new Date(Date.now() - 120000).toISOString();
+      const j = await amzApi('/finances/v0/financialEvents?' + new URLSearchParams({
+        MaxResultsPerPage: '100', PostedAfter: de, PostedBefore: ate,
+      }).toString());
+      const ev = ((j.payload || {}).FinancialEvents) || {};
+      const listas = {};
+      for (const k of Object.keys(ev)) if (Array.isArray(ev[k]) && ev[k].length) listas[k] = ev[k].length;
+      const env = (ev.ShipmentEventList || [])[0] || {};
+      return sendJSON(res, 200, {
+        listas,
+        exemploServico: (ev.ServiceFeeEventList || [])[0] || null,
+        camposDoEnvio: Object.keys(env),
+        taxasDoEnvio: (env.ShipmentFeeList || []).concat(env.OrderFeeList || []),
+      });
     }
 
     // Diagnóstico: um pedido cru, exatamente como veio da Amazon, para conferir
