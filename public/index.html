@@ -374,10 +374,22 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
     </div>
 
     <div id="tab-custos" style="display:none">
-      <div class="mhint">O cadastro de produtos e custos agora tem página própria — com <b>histórico de custo por data</b> (o custo de vendas antigas não muda sozinho), cadastro individual e importação por planilha.</div>
-      <div class="mrow" style="justify-content:flex-start">
+      <div class="mhint">O <b>imposto padrão</b> incide sobre o valor da venda em todo produto que não tenha alíquota própria cadastrada.</div>
+      <div class="field" style="max-width:300px">
+        <label>Imposto padrão sobre a venda</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input id="cfgImposto" type="number" step="0.1" min="0" max="100" style="text-align:right">
+          <span class="muted">%</span>
+          <button class="btn" onclick="salvarImposto()">Salvar</button>
+        </div>
+      </div>
+      <div class="field"><label>Situação</label><div class="tip" id="cfgImpostoInfo" style="margin-top:0">—</div></div>
+      <div class="mrow">
+        <span class="ok-msg" id="cfgImpostoMsg"></span>
+        <button class="btn ghost" onclick="aplicarImpostoATodos()">Aplicar o padrão a todos</button>
         <button class="btn" onclick="closeCfg();goView('produtos')">Abrir gestão de Produtos</button>
       </div>
+      <div class="mhint" style="margin-top:14px">O cadastro de produtos e custos tem página própria — com <b>histórico de custo por data</b> (o custo de vendas antigas não muda sozinho), cadastro individual e importação por planilha.</div>
     </div>
   </div>
 </div>
@@ -1002,7 +1014,7 @@ async function loadProducts(){
   document.getElementById('content').innerHTML='<div class="loading">Carregando produtos…</div>';
   try{
     const j=await(await fetch('/api/products')).json();
-    PRODS=j.itens||[]; TAXA_PADRAO=j.taxaPadrao!=null?j.taxaPadrao:0.09;
+    PRODS=j.itens||[]; TAXA_PADRAO=j.taxaPadrao!=null?j.taxaPadrao:0.06;
     renderProducts();
   }catch(e){ document.getElementById('content').innerHTML='<div class="loading">Erro ao carregar produtos.</div>'; }
 }
@@ -1052,7 +1064,7 @@ function renderProducts(){
   draw();
   document.getElementById('prodMgSearch').oninput=draw;
   document.getElementById('taxaPadraoBtn').onclick=async()=>{
-    const t=parseFloat((document.getElementById('taxaPadraoInp').value||'9').replace(',','.'))/100;
+    const t=parseFloat((document.getElementById('taxaPadraoInp').value||'6').replace(',','.'))/100;
     await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxaPadrao:t})});
     TAXA_PADRAO=t; loadProducts();
   };
@@ -1131,7 +1143,36 @@ function cfgTab(t){document.querySelectorAll('.mtabs button').forEach(b=>b.class
   $('tab-custos').style.display=t==='custos'?'':'none';
   if(t==='amazon') carregarAmazon();
   if(t==='shopee') carregarShopee();
-  if(t==='tiktok') carregarTikTok();}
+  if(t==='tiktok') carregarTikTok();
+  if(t==='custos') carregarImposto();}
+
+// ===== Imposto padrão =====
+async function carregarImposto(){
+  try{
+    const c=await(await fetch('/api/costs')).json();
+    $('cfgImposto').value=((c.taxaPadrao!=null?c.taxaPadrao:0.06)*100).toFixed(1);
+    const itens=c.itens||{};
+    const proprios=Object.keys(itens).filter(k=>itens[k].imposto!=null);
+    $('cfgImpostoInfo').textContent = proprios.length
+      ? (proprios.length+' produto(s) têm alíquota própria cadastrada e ignoram o padrão.')
+      : 'Todos os produtos estão usando o padrão.';
+    $('cfgImpostoMsg').textContent='';
+  }catch(e){}
+}
+async function salvarImposto(){
+  const t=parseFloat(String($('cfgImposto').value||'6').replace(',','.'))/100;
+  $('cfgImpostoMsg').textContent='Salvando…';
+  await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxaPadrao:t})});
+  $('cfgImpostoMsg').textContent='Salvo.';
+  carregarImposto(); loadDashboard();
+}
+async function aplicarImpostoATodos(){
+  if(!confirm('Apagar a alíquota individual de cada produto e deixar todos no imposto padrão?')) return;
+  $('cfgImpostoMsg').textContent='Aplicando…';
+  await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limparImpostoPorSku:true})});
+  $('cfgImpostoMsg').textContent='Pronto.';
+  carregarImposto(); loadDashboard();
+}
 
 // ===== TikTok Shop =====
 let tkRedirectUrl='';
