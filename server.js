@@ -1860,6 +1860,26 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // Resumo do repasse da Shopee no período: soma cada campo do escrow de todos
+    // os pedidos. É o equivalente à aba Summary do extrato, direto pela API.
+    if (p === '/api/shopee/resumo') {
+      if (!shpConectada()) return sendJSON(res, 200, { erro: 'Shopee não conectada' });
+      const de = u.searchParams.get('from') || new Date(Date.now() - 30 * 864e5).toISOString();
+      const ate = u.searchParams.get('to') || new Date().toISOString();
+      try {
+        const sns = await shpPedidos(de, ate);
+        const esc = await shpEscrow(sns);
+        const soma = {}; let n = 0;
+        for (const sn of Object.keys(esc)) {
+          const r = esc[sn] || {}; n++;
+          for (const k of Object.keys(r)) {
+            if (typeof r[k] === 'number') soma[k] = round2((soma[k] || 0) + r[k]);
+          }
+        }
+        return sendJSON(res, 200, { pedidos: sns.length, comRepasse: n, soma });
+      } catch (e) { return sendJSON(res, 200, { erro: String(e.message || e) }); }
+    }
+
     // Diagnóstico: repasse cru de um pedido da Shopee, para conferir campo a campo
     if (p === '/api/shopee/pedido') {
       const sn = u.searchParams.get('id') || '';
