@@ -466,11 +466,15 @@ function janelaFinanceiro(deISO) {
 // de um minuto.
 const AMZ_DB_FILE = path.join(DATA_DIR, 'amazon-db.json');
 let amzDB = readJSON(AMZ_DB_FILE, {});
-amzDB = { pedidos: {}, itens: {}, fin: {}, ultimaSync: '', ultimaFin: '', ...amzDB };
+amzDB = { pedidos: {}, itens: {}, fin: {}, falhas: {}, ultimaSync: '', ultimaFin: '', ...amzDB };
 let amzDBsujo = false;
 const amzFila = [];          // pedidos esperando os itens
 let amzCiclando = false;
 let amzErroSync = '';
+
+// A fila mora na memória; num reinício ela sumiria e os pedidos guardados sem
+// itens ficariam órfãos para sempre. Então recomeçamos a fila pelo que falta.
+for (const id of Object.keys(amzDB.pedidos)) if (!amzDB.itens[id]) amzFila.push(id);
 
 function amzGuardar() {
   if (!amzDBsujo) return;
@@ -508,9 +512,17 @@ async function amzSyncItens() {
     try {
       const r = (await amzApi('/orders/v0/orders/' + id + '/orderItems')).payload || {};
       amzDB.itens[id] = r.OrderItems || [];
+      delete amzDB.falhas[id];
       amzDBsujo = true;
     } catch (e) {
-      if (/429|throttl|quota/i.test(String(e.message || ''))) { amzFila.unshift(id); break; }
+      const msg = String(e.message || e);
+      // Cota estourada: devolve para o começo e espera o próximo ciclo
+      if (/429|throttl|quota/i.test(msg)) { amzFila.unshift(id); break; }
+      // Outro erro: anota e tenta de novo mais tarde, até desistir
+      const tentativas = ((amzDB.falhas[id] || {}).n || 0) + 1;
+      amzDB.falhas[id] = { n: tentativas, erro: msg.slice(0, 140) };
+      amzDBsujo = true;
+      if (tentativas < 4) amzFila.push(id);
     }
     await esperar(2200);
   }
@@ -612,14 +624,22 @@ async function amzListSales(deISO, ateISO) {
       const base = itemsRaw.reduce((s, i) => s + i.unit * i.qtd, 0) || 1;
       itemsRaw.forEach((i) => { i.comissao += taxasDoPedido * ((i.unit * i.qtd) / base); });
     }
+    // Frete e promoção também vêm no item do pedido, e é de lá que sai o custo do
+    // DBA: a Amazon entrega de graça para o comprador e desconta do vendedor, o
+    // que aparece como ShippingDiscount. Sem ler isso o frete ficava sempre zero.
+    const soma = (campo) => lista.reduce((s, it) => s + Number(((it[campo] || {}).Amount) || 0), 0);
+    const fretePeloComprador = soma('ShippingPrice') + soma('ShippingTax');
+    const fretePeloVendedor = soma('ShippingDiscount') + soma('ShippingDiscountTax');
+    const promocoes = soma('PromotionDiscount') + soma('PromotionDiscountTax');
     const st = String(o.OrderStatus || '').toLowerCase();
     const pedido = buildOrder({
       id: o.AmazonOrderId, data: o.PurchaseDate, dataAprov: o.PurchaseDate,
       status: st === 'canceled' ? 'cancelled' : (st === 'pending' ? 'pending' : 'shipped'),
       envio: amzEnvio(o), pack: false,
       itemsRaw,
-      freteVend: (f.fretePedido || 0),          // frete do DBA/Easy Ship, pago pelo vendedor
-      freteComp: (f.freteComprador || 0), descontos: 0, conta: 'amz',
+      freteVend: (f.fretePedido || 0) + fretePeloVendedor,
+      freteComp: fretePeloComprador || (f.freteComprador || 0),
+      descontos: promocoes, conta: 'amz',
     });
     // A Amazon lança as taxas dias depois da venda. Enquanto não lança, o lucro
     // do pedido está otimista — marcamos para não confundir com número fechado.
@@ -1778,6 +1798,10 @@ const server = http.createServer(async (req, res) => {
         pedido: amzDB.pedidos[achado],
         itens: amzDB.itens[achado] || [],
         financeiro: amzDB.fin[achado] || null,
+        falha: amzDB.falhas[achado] || null,
+        fila: amzFila.length,
+        falhasTotal: Object.keys(amzDB.falhas).length,
+        exemploFalha: Object.keys(amzDB.falhas).map((k) => amzDB.falhas[k].erro)[0] || '',
       });
     }
 
