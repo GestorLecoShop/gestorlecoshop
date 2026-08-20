@@ -196,7 +196,11 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
   <main class="main">
     <div id="banner"></div>
     <div class="top">
-      <div><h1>Visão Geral</h1><div class="sub" id="periodLabel">Carregando…</div></div>
+      <div><h1>Visão Geral</h1><div class="sub"><span id="periodLabel">Carregando…</span>
+        <span id="atualizadoEm" class="muted" style="margin-left:10px;font-size:12px"></span>
+        <button id="btnAtualizar" onclick="atualizarAgora()" title="Buscar vendas novas agora"
+          style="margin-left:8px;background:none;border:0;color:var(--brand);cursor:pointer;font-size:12px;padding:0">atualizar</button>
+      </div></div>
       <div class="filters">
         <select class="sel" id="fPeriod">
           <option value="hoje" selected>Hoje</option>
@@ -565,10 +569,39 @@ async function loadDashboard(){
   CH=DATA.channels||{}; DRE=DATA.dreDetail||{};
   aplicarCanal();
   renderBanner(); renderConn(); mount();
+  marcarAtualizado();
 }
 
 // ===== Navegação entre páginas (Dashboard / Vendas) =====
 function refresh(){ if(state.view==='vendas') loadSales(); else if(state.view==='produtos') loadProducts(); else if(state.view==='semassoc') loadSemAssoc(); else loadDashboard(); }
+
+// ===== Atualização automática =====
+// A tela carregava uma vez e congelava: venda nova só aparecia com F5. Agora ela
+// se refaz sozinha, mas sem atrapalhar — nada roda com a aba escondida nem com
+// um modal aberto (você pode estar no meio de uma associação).
+let ATUALIZANDO=false;
+function marcarAtualizado(){
+  const e=document.getElementById('atualizadoEm'); if(!e) return;
+  const h=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  e.textContent='atualizado às '+h;
+}
+function podeAtualizar(){
+  if(ATUALIZANDO) return false;
+  if(document.visibilityState!=='visible') return false;
+  if(document.querySelector('.modal.open')) return false;
+  return true;
+}
+async function atualizarAgora(){
+  if(ATUALIZANDO) return;
+  ATUALIZANDO=true;
+  const b=document.getElementById('btnAtualizar'); if(b) b.textContent='buscando…';
+  try{ await refresh(); await carregarPendentes(); marcarAtualizado(); }
+  catch(e){}
+  finally{ ATUALIZANDO=false; if(b) b.textContent='atualizar'; }
+}
+setInterval(()=>{ if(podeAtualizar()) atualizarAgora(); }, 60000);
+// Voltou para a aba depois de um tempo: atualiza na hora, sem esperar o minuto
+document.addEventListener('visibilitychange',()=>{ if(podeAtualizar()) atualizarAgora(); });
 function goView(v){
   state.view=v;
   document.getElementById('navDashboard').classList.toggle('on',v==='dashboard');
