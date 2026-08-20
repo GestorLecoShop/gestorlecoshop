@@ -163,14 +163,14 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .costs-tbl input{width:90px;background:var(--surface2);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;outline:none}
 .ok-msg{color:var(--brand);font-size:12px;font-weight:600}
 .close-x{float:right;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1}
-@media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}.g-2-1,.g-1-1{grid-template-columns:1fr}.app{grid-template-columns:1fr}.side{display:none}}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}.g-2-1,.g-1-1{grid-template-columns:1fr}.app{grid-template-columns:1fr}.side{display:none}.main{padding-bottom:84px}}
 /* App instalado no celular: respeita entalhe/barra do sistema e cria menu inferior */
 @media(display-mode:standalone){
   .main{padding-top:calc(18px + env(safe-area-inset-top));padding-bottom:calc(84px + env(safe-area-inset-bottom))}
-  .tabbar{display:flex !important}
 }
 .tabbar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--surface);border-top:1px solid var(--line);
   padding:8px 8px calc(8px + env(safe-area-inset-bottom));justify-content:space-around}
+@media(max-width:1100px){.tabbar{display:flex}}
 .tabbar button{flex:1;background:none;border:0;color:var(--muted);font-size:11px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px;cursor:pointer}
 .tabbar button.on{color:var(--brand)}
 .tabbar svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2}
