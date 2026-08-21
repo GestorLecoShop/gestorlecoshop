@@ -483,7 +483,7 @@ function janelaFinanceiro(deISO) {
 // de um minuto.
 const AMZ_DB_FILE = path.join(DATA_DIR, 'amazon-db.json');
 let amzDB = readJSON(AMZ_DB_FILE, {});
-amzDB = { pedidos: {}, itens: {}, fin: {}, falhas: {}, ultimaSync: '', ultimaFin: '', ...amzDB };
+amzDB = { pedidos: {}, itens: {}, fin: {}, falhas: {}, precoRef: {}, ultimaSync: '', ultimaFin: '', ...amzDB };
 let amzDBsujo = false;
 const amzFila = [];          // pedidos esperando os itens
 let amzCiclando = false;
@@ -610,6 +610,22 @@ async function amzListSales(deISO, ateISO) {
       // O pedido manda o preço cheio; o extrato manda só o Principal, sem imposto.
       // Por isso o pedido vem primeiro e o extrato fica de reserva.
       const receita = precoDoPedido > 0 ? precoDoPedido : (lf.receita || 0);
+      let unit = qtd ? receita / qtd : 0;
+      let comissao = lf.taxas ? -lf.taxas : 0;
+      let estimado = false;
+      if (unit > 0) {
+        // Pedido com preço real confirmado pela Amazon: guarda como referência
+        // para estimar pedidos "Pending" desse mesmo SKU que ainda não têm valor.
+        amzDB.precoRef[skuBruto] = { unit, comissaoUnit: qtd ? comissao / qtd : 0, data: o.PurchaseDate };
+        amzDBsujo = true;
+      } else {
+        // Amazon ainda não liberou preço (pedido "Pending"): em vez de mostrar
+        // R$0 e um prejuízo fictício (só o custo, sem receita), estima com o
+        // último preço real vendido desse SKU — igual o Gestor Seller faz.
+        // É substituído pelo valor real assim que a Amazon libera.
+        const ref = amzDB.precoRef[skuBruto];
+        if (ref) { unit = ref.unit; comissao = ref.comissaoUnit * qtd; estimado = true; }
+      }
       if (skuBruto && !temAssociacao(skuBruto)
         && registrarPendente(skuBruto, it.Title || ('SKU ' + skuBruto + ' (Amazon)'), 'amz', o.PurchaseDate)) mudouPendentes = true;
       return {
@@ -619,8 +635,9 @@ async function amzListSales(deISO, ateISO) {
         sku: resolverSku(skuBruto),
         associado: temAssociacao(skuBruto),
         qtd,
-        unit: qtd ? receita / qtd : 0,
-        comissao: lf.taxas ? -lf.taxas : 0,
+        unit,
+        comissao,
+        estimado,
         img: costs.fotos[resolverSku(skuBruto)] || '',
       };
     });
@@ -662,6 +679,9 @@ async function amzListSales(deISO, ateISO) {
     // do pedido está otimista — marcamos para não confundir com número fechado.
     pedido.taxaPendente = !fin[o.AmazonOrderId];
     pedido.semPreco = !temPreco;
+    // Preço estimado pelo último valor real vendido desse SKU (pedido "Pending"
+    // sem valor liberado ainda pela Amazon) — vira número real no próximo sync.
+    pedido.estimado = itemsRaw.some((i) => i.estimado);
     out.push(pedido);
   });
   if (semPreco) {
