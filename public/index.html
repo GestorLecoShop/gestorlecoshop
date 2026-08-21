@@ -663,6 +663,7 @@ function cabecalhoVenda(o){
     ${seloEnvio(o.envio)}
     ${o.pack?`<span class="pack" title="Vários pedidos enviados juntos">${IC_PACOTE}Pacote</span>`:''}
     ${o.semPreco?'<span class="ship alerta" title="A Amazon ainda não liberou o valor deste pedido — fora das contas">sem valor</span>':''}
+    ${o.estimado?'<span class="ship alerta" title="A Amazon ainda não liberou o valor real deste pedido — usando o último preço vendido desse SKU como estimativa">estimado</span>':''}
     ${o.taxaPendente?'<span class="ship alerta" title="A Amazon ainda não lançou as taxas deste pedido — o lucro está otimista">taxa pendente</span>':''}
     ${o.semAssoc?'<span class="ship alerta" title="Anúncio sem produto associado — fora das contas">sem produto</span>':''}
     <span class="ord-mp">${o.marketplace}</span>
