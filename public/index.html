@@ -599,7 +599,7 @@ async function atualizarAgora(){
   catch(e){}
   finally{ ATUALIZANDO=false; if(b) b.textContent='atualizar'; }
 }
-setInterval(()=>{ if(podeAtualizar()) atualizarAgora(); }, 60000);
+setInterval(()=>{ if(podeAtualizar()) atualizarAgora(); }, 120000);
 // Voltou para a aba depois de um tempo: atualiza na hora, sem esperar o minuto
 document.addEventListener('visibilitychange',()=>{ if(podeAtualizar()) atualizarAgora(); });
 function goView(v){
