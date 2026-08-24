@@ -2272,7 +2272,11 @@ const server = http.createServer(async (req, res) => {
       if (!conectadas.length && !amzConectada() && !shpConectada() && !ttkConectada()) return sendJSON(res, 200, { sales: demoSales(), demo: true });
       // se o filtro pedir um canal específico, busca só nele
       const filtro = u.searchParams.get('canal');
-      const alvo = ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : (filtro === 'amz' ? [] : conectadas);
+      // Só busca no Mercado Livre quando não há filtro, quando é "todos" ou quando
+      // o filtro é uma conta do próprio ML. Antes só a Amazon estava listada como
+      // exceção, então filtrar por Shopee ou TikTok trazia todo o ML junto.
+      const alvo = (!filtro || filtro === 'all') ? conectadas
+        : (ehContaML(filtro) ? conectadas.filter((c) => c === filtro) : []);
       let sales = [];
       const erros = [];
       for (const conta of alvo) {
