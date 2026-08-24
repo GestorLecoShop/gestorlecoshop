@@ -1503,6 +1503,18 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
       freteVend: round2(fVend), freteComp: round2(fComp), descontos: round2(desc),
     };
   });
+  // Pedido cancelado não gera receita, custo nem imposto: a mercadoria não saiu e
+  // o dinheiro não entrou. Deixar os valores cheios fazia a venda cancelada
+  // aparecer com lucro (ou prejuízo) inventado na tela. Guardamos só o valor
+  // original, para você ver o que foi cancelado.
+  const cancelado = status === 'cancelled';
+  if (cancelado) {
+    itens.forEach((i) => {
+      i.liquido = 0; i.imposto = 0; i.custo = 0; i.custoExtra = 0;
+      i.lucro = 0; i.margem = 0; i.comissao = 0;
+      i.freteVend = 0; i.freteComp = 0; i.descontos = 0;
+    });
+  }
   const soma = (k) => itens.reduce((s, i) => s + i[k], 0);
   const comissaoTot = soma('comissao');
   return {
@@ -1511,9 +1523,14 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     semAssoc: itens.some((i) => i.associado === false),
     envio: envio || '', pack: !!pack,
     itens,
+    // valor que o pedido tinha antes de ser cancelado, só para exibir
+    valorCancelado: cancelado ? round2(totalProduto) : 0,
     resumo: {
-      totalProduto: round2(totalProduto), total: round2(totalProduto + freteComp),
-      freteVend: round2(freteVend), freteComp: round2(freteComp), descontos: round2(descontos),
+      totalProduto: cancelado ? 0 : round2(totalProduto),
+      total: cancelado ? 0 : round2(totalProduto + freteComp),
+      freteVend: cancelado ? 0 : round2(freteVend),
+      freteComp: cancelado ? 0 : round2(freteComp),
+      descontos: cancelado ? 0 : round2(descontos),
       comissao: round2(comissaoTot), imposto: round2(soma('imposto')), custo: round2(soma('custo')), custoExtra: round2(soma('custoExtra')),
       liquido: round2(soma('liquido')), lucro: round2(soma('lucro')),
     },
