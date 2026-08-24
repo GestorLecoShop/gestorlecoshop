@@ -127,6 +127,9 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
 .ship.dba{background:rgba(56,189,248,.16);color:var(--blue);letter-spacing:.8px}
 .ship.shopee{background:rgba(238,77,45,.18);color:#ee4d2d;letter-spacing:.6px}
 .ship.tiktok{background:rgba(105,201,208,.18);color:#69c9d0;letter-spacing:.6px}
+.ship.cancel{background:rgba(251,113,133,.16);color:#fb7185;letter-spacing:.4px}
+.ord.canc{opacity:.55}
+.ord.canc:hover{opacity:.85}
 .pack{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid rgba(34,197,94,.55);color:var(--brand);background:rgba(34,197,94,.08);white-space:nowrap}
 .pack svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
 .ord-tbl th{font-size:10px;padding:10px 12px 6px}
@@ -662,6 +665,7 @@ function cabecalhoVenda(o){
     <span class="ord-date">${IC_HORA}${fmtHora(o.data)}</span>
     ${seloEnvio(o.envio)}
     ${o.pack?`<span class="pack" title="Vários pedidos enviados juntos">${IC_PACOTE}Pacote</span>`:''}
+    ${o.status==='cancelled'?`<span class="ship cancel" title="Pedido cancelado — não entra em nenhum resultado">cancelado${o.valorCancelado?' · era '+BRL(o.valorCancelado):''}</span>`:''}
     ${o.semPreco?'<span class="ship alerta" title="A Amazon ainda não liberou o valor deste pedido — fora das contas">sem valor</span>':''}
     ${o.estimado?'<span class="ship alerta" title="A Amazon ainda não liberou o valor real deste pedido — usando o último preço vendido desse SKU como estimativa">estimado</span>':''}
     ${o.taxaPendente?'<span class="ship alerta" title="A Amazon ainda não lançou as taxas deste pedido — o lucro está otimista">taxa pendente</span>':''}
@@ -702,7 +706,7 @@ function renderSales(demo,error){
       <td class="num ${it.lucro<0?'neg':'pos'}" style="font-weight:700">${BRL(it.lucro)}</td>
       <td style="text-align:center"><span class="badge ${it.margem<0?'Z':it.margem>=25?'A':'C'}">${PCT(it.margem)}</span></td>
     </tr>`).join('');
-    return `<div class="ord">
+    return `<div class="ord${o.status==='cancelled'?' canc':''}">
       ${cabecalhoVenda(o)}
       <div class="tbl-wrap"><table class="ord-tbl"><thead><tr>
         <th>Item</th><th class="num">Qtd</th><th class="num">Total</th><th class="num">Preço Unit.</th>
@@ -738,7 +742,9 @@ function renderSales(demo,error){
     let rows=SALES.filter(o=>o.itens.some(it=>String(it.titulo).toLowerCase().includes(q)||String(it.sku).toLowerCase().includes(q))||String(o.id).toLowerCase().includes(q));
     if(salesSort==='data')rows.sort((a,b)=>new Date(b.data)-new Date(a.data));
     else rows.sort((a,b)=>(b.resumo[salesSort]||0)-(a.resumo[salesSort]||0));
-    document.getElementById('salesCount').textContent=rows.length+' vendas';
+    const canc=rows.filter(o=>o.status==='cancelled').length;
+    document.getElementById('salesCount').textContent=(rows.length-canc)+' vendas'
+      +(canc?('  ·  '+canc+' cancelada'+(canc>1?'s':'')+' (fora das contas)'):'');
     document.getElementById('ordList').innerHTML=rows.map(orderCard).join('')||'<div class="card" style="text-align:center;color:var(--muted);padding:40px">Nenhuma venda no período. Troque o filtro de tempo no topo.</div>';
   }
   draw(); pintarBanner();
