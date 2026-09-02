@@ -412,7 +412,7 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
       <div class="field" style="flex:1;min-width:150px"><label>Custo Extra (ex.: embalagem)</label><input id="pmExtra" placeholder="Ex.: 0,50"></div>
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">
-      <div class="field" style="flex:1;min-width:150px"><label>SKU Interno *</label><input id="pmSku" placeholder="Ex.: KIT50X"></div>
+      <div class="field" style="flex:1;min-width:150px"><label>SKU Interno *</label><input id="pmSku" placeholder="Ex.: KIT50X"><div class="tip" id="pmSkuDica"></div></div>
       <div class="field" style="flex:1;min-width:150px"><label>Imposto (%)</label><input id="pmImposto" type="number" step="0.1" placeholder="9"></div>
     </div>
     <div class="field"><label>EAN (código de barras) — opcional</label><input id="pmEan" placeholder="Ex.: 7891234567890"></div>
@@ -1117,6 +1117,7 @@ async function delProd(sku){
   loadProducts();
 }
 function pmSet(id,v){document.getElementById(id).value=v;}
+let PM_ANUNCIO='';   // anúncio de origem, quando o cadastro veio de um pendente
 function openProd(p){
   const edit = !!(p && !p.naoCadastrado);   // produto já cadastrado (edição de custo)
   document.getElementById('prodModalTitle').textContent = !p?'Novo Produto':edit?'Editar Produto':'Cadastrar Produto';
@@ -1126,7 +1127,15 @@ function openProd(p){
   pmSet('pmSku', p?(p.sku||''):'');
   pmSet('pmEan', p?(p.ean||''):'');
   pmSet('pmImposto', (p&&p.imposto!=null?p.imposto:TAXA_PADRAO)*100);
-  document.getElementById('pmSku').readOnly=!!p;
+  // Só trava o SKU de produto já cadastrado: renomear ali quebraria o histórico de
+  // custo e as associações. Vindo de um anúncio, o SKU é apenas sugestão — você
+  // pode usar o seu código interno, e a gente amarra o anúncio a ele no save.
+  PM_ANUNCIO = (p && p.naoCadastrado) ? (p.sku || '') : '';
+  document.getElementById('pmSku').readOnly = edit;
+  const dica=document.getElementById('pmSkuDica');
+  if(dica) dica.textContent = edit
+    ? 'O SKU não muda depois de cadastrado — ele amarra o histórico de custo.'
+    : (PM_ANUNCIO ? 'Sugerido pelo anúncio. Pode trocar pelo seu código interno.' : '');
   document.getElementById('pmPeriodoWrap').style.display=edit?'block':'none';
   document.getElementById('pmModo').value='novas';
   pmPeriodoToggle();
@@ -1153,6 +1162,12 @@ async function saveProd(){
     if(!body.desde){document.getElementById('pmMsg').textContent='Escolha a data inicial do período.';return;} }
   document.getElementById('pmMsg').textContent='Salvando…';
   await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  // Cadastro veio de um anúncio e você usou outro código interno: amarra os dois,
+  // senão o anúncio continuaria na lista de pendentes para sempre.
+  if(PM_ANUNCIO && PM_ANUNCIO!==sku){
+    await fetch('/api/associar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chave:PM_ANUNCIO,sku})});
+  }
+  PM_ANUNCIO='';
   closeProd();
   if(state.view==='semassoc'){ await carregarPendentes(); renderSemAssoc(); }
   else { await carregarPendentes(); loadProducts(); }
