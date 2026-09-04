@@ -1927,6 +1927,34 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // Diagnóstico: pedido cru do Mercado Livre, para procurar marca de publicidade
+    if (p === '/api/ml/pedido') {
+      const conta = u.searchParams.get('conta') || 'ml';
+      const id = u.searchParams.get('id') || '';
+      try {
+        if (id) {
+          const o = await mlApi('/orders/' + id, conta);
+          return sendJSON(res, 200, { campos: Object.keys(o), context: o.context, tags: o.tags, item0: Object.keys((o.order_items || [])[0] || {}) });
+        }
+        const me = await mlApi('/users/me', conta);
+        const de = new Date(Date.now() - 3 * 864e5).toISOString();
+        const ate = new Date().toISOString();
+        const lista = await mlFetchOrders(me.id, de, ate, conta);
+        const ctx = {}; const tg = {};
+        for (const o of lista) {
+          const f = ((o.context || {}).flows || []).join('+') || '(vazio)';
+          ctx[f] = (ctx[f] || 0) + 1;
+          for (const t of (o.tags || [])) tg[t] = (tg[t] || 0) + 1;
+        }
+        return sendJSON(res, 200, {
+          pedidos: lista.length,
+          campos: Object.keys(lista[0] || {}),
+          contextExemplo: (lista[0] || {}).context,
+          fluxos: ctx, tags: tg,
+        });
+      } catch (e) { return sendJSON(res, 200, { erro: String(e.message || e) }); }
+    }
+
     // Resumo do repasse da Shopee no período: soma cada campo do escrow de todos
     // os pedidos. É o equivalente à aba Summary do extrato, direto pela API.
     if (p === '/api/shopee/resumo') {
