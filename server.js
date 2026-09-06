@@ -1934,7 +1934,21 @@ const server = http.createServer(async (req, res) => {
       try {
         if (id) {
           const o = await mlApi('/orders/' + id, conta);
-          return sendJSON(res, 200, { campos: Object.keys(o), context: o.context, tags: o.tags, item0: Object.keys((o.order_items || [])[0] || {}) });
+          return sendJSON(res, 200, {
+            campos: Object.keys(o), context: o.context, tags: o.tags,
+            total_amount: o.total_amount, paid_amount: o.paid_amount,
+            coupon: o.coupon,
+            itens: (o.order_items || []).map((it) => ({
+              unit_price: it.unit_price, full_unit_price: it.full_unit_price,
+              quantity: it.quantity, sale_fee: it.sale_fee, listing_type_id: it.listing_type_id,
+            })),
+            pagamentos: (o.payments || []).map((pp) => ({
+              status: pp.status, transaction_amount: pp.transaction_amount,
+              total_paid_amount: pp.total_paid_amount, coupon_amount: pp.coupon_amount,
+              shipping_cost: pp.shipping_cost, marketplace_fee: pp.marketplace_fee,
+              overpaid_amount: pp.overpaid_amount, taxes_amount: pp.taxes_amount,
+            })),
+          });
         }
         const me = await mlApi('/users/me', conta);
         const de = new Date(Date.now() - 3 * 864e5).toISOString();
