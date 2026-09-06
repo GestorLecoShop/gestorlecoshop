@@ -1576,7 +1576,12 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
     const freteVend = envioPedido[idx].frete;
     const pays = o.payments || [];
     const freteComp = pays.reduce((s, pp) => s + (pp.shipping_cost || 0), 0);
-    const descontos = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
+    // O cupom do Mercado Livre é bancado pelo próprio ML: o comprador paga menos,
+    // o vendedor recebe sobre o valor cheio. Conferido em dois pedidos iguais do
+    // mesmo dia — com e sem cupom, o paid_amount e a sale_fee são idênticos, só o
+    // total_paid_amount do comprador muda. Descontar isso comia lucro que existe.
+    const cupomMkt = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
+    const descontos = 0;
     const itemsRaw = items.map((it) => ({
       titulo: (it.item && it.item.title) || '—',
       chave: chaveAnuncio(it.item),
@@ -1588,7 +1593,7 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
       comissao: (it.sale_fee || 0) * (it.quantity || 0),
       img: (it.item && thumbs[it.item.id]) || '',
     }));
-    out.push(buildOrder({
+    const pedido = buildOrder({
       id: o.id, data: o.date_created, dataAprov: o.date_closed, status: o.status,
       // modalidade real deste pedido; o anúncio só serve de reserva se o envio não responder
       envio: envioPedido[idx].tipo
@@ -1596,7 +1601,10 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
         || items.map((it) => it.item && envios[it.item.id]).find(Boolean) || '',
       pack: !!o.pack_id,
       itemsRaw, freteVend, freteComp, descontos, conta,
-    }));
+    });
+    // guardado só para exibir: o comprador usou cupom, mas quem pagou foi o ML
+    if (cupomMkt) pedido.cupomMarketplace = round2(cupomMkt);
+    out.push(pedido);
   });
   return out;
 }
