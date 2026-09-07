@@ -391,6 +391,20 @@ td{padding:11px 12px;border-bottom:1px solid rgba(38,50,63,.5)}tr:hover td{backg
         </div>
       </div>
       <div class="field"><label>Situação</label><div class="tip" id="cfgImpostoInfo" style="margin-top:0">—</div></div>
+      <div class="mhint" style="margin-top:16px">A partir de uma data, quem define a alíquota é a <b>filial que faturou</b>, e não o produto. Vendas anteriores a essa data ficam exatamente como estão.</div>
+      <div class="field" style="max-width:640px">
+        <label>Alíquota por filial — a partir de</label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input id="cfgFilialDesde" type="date" style="background:var(--surface2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:6px 8px">
+          <span class="muted">Matriz</span>
+          <input id="cfgFilialMatriz" type="number" step="0.1" min="0" max="100" style="width:70px;text-align:right"><span class="muted">%</span>
+          <span class="muted">Filial 04 (LDM SC)</span>
+          <input id="cfgFilial04" type="number" step="0.1" min="0" max="100" style="width:70px;text-align:right"><span class="muted">%</span>
+          <button class="btn" onclick="salvarTaxaFilial()">Salvar</button>
+          <button class="btn ghost" onclick="desligarTaxaFilial()">Desligar</button>
+        </div>
+      </div>
+      <div class="field"><label>Situação da regra por filial</label><div class="tip" id="cfgFilialInfo" style="margin-top:0">—</div></div>
       <div class="mrow">
         <span class="ok-msg" id="cfgImpostoMsg"></span>
         <button class="btn ghost" onclick="aplicarImpostoATodos()">Aplicar o padrão a todos</button>
@@ -1213,7 +1227,31 @@ async function carregarImposto(){
       ? (proprios.length+' produto(s) têm alíquota própria cadastrada e ignoram o padrão.')
       : 'Todos os produtos estão usando o padrão.';
     $('cfgImpostoMsg').textContent='';
+    const tf=c.taxaFilial;
+    const pc=v=>(v*100).toFixed(1).replace('.',',');
+    $('cfgFilialDesde').value=(tf&&tf.desde)?tf.desde:'';
+    $('cfgFilialMatriz').value=((tf&&tf.padrao!=null?tf.padrao:0.06)*100).toFixed(1);
+    $('cfgFilial04').value=((tf&&tf.canais&&tf.canais.ldmsc!=null?tf.canais.ldmsc:0.04)*100).toFixed(1);
+    $('cfgFilialInfo').textContent=(tf&&tf.desde)
+      ? ('Em vigor desde '+tf.desde.split('-').reverse().join('/')+': Matriz '+pc(tf.padrao||0)+'% e Filial 04 '+pc((tf.canais||{}).ldmsc||0)+'%. Nessas vendas a alíquota por SKU não é usada.')
+      : 'Desligada — vale a alíquota própria do SKU, ou o padrão acima.';
   }catch(e){}
+}
+async function salvarTaxaFilial(){
+  const desde=$('cfgFilialDesde').value;
+  if(!desde){$('cfgImpostoMsg').textContent='Escolha a data a partir da qual a regra vale.';return;}
+  const padrao=parseFloat(String($('cfgFilialMatriz').value||'6').replace(',','.'))/100;
+  const ldmsc=parseFloat(String($('cfgFilial04').value||'4').replace(',','.'))/100;
+  $('cfgImpostoMsg').textContent='Salvando…';
+  await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxaFilial:{desde,padrao,canais:{ldmsc}}})});
+  $('cfgImpostoMsg').textContent='Salvo.';
+  carregarImposto(); loadDashboard();
+}
+async function desligarTaxaFilial(){
+  $('cfgImpostoMsg').textContent='Desligando…';
+  await fetch('/api/costs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxaFilial:null})});
+  $('cfgImpostoMsg').textContent='Regra por filial desligada.';
+  carregarImposto(); loadDashboard();
 }
 async function salvarImposto(){
   const t=parseFloat(String($('cfgImposto').value||'6').replace(',','.'))/100;
