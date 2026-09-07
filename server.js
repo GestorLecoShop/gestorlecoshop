@@ -1935,6 +1935,54 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // Diagnóstico: quem bancou o cupom deste pedido — o vendedor ou o Mercado Livre.
+    // /orders/{id}/discounts traz a origem do desconto; o pagamento traz fee_details,
+    // onde uma taxa com fee_payer = "collector" significa que quem pagou fomos nós.
+    if (p === '/api/ml/cupom') {
+      const conta = u.searchParams.get('conta') || 'ml';
+      const id = u.searchParams.get('id') || '';
+      const saida = { conta, id };
+      const tenta = async (rotulo, caminho) => {
+        try { saida[rotulo] = await mlApi(caminho, conta); }
+        catch (e) { saida[rotulo] = { erroChamada: String(e.message || e) }; }
+      };
+      try {
+        const o = await mlApi('/orders/' + id, conta);
+        saida.pedido = {
+          total_amount: o.total_amount, paid_amount: o.paid_amount,
+          coupon: o.coupon, status: o.status, tags: o.tags,
+          itens: (o.order_items || []).map((it) => ({
+            unit_price: it.unit_price, full_unit_price: it.full_unit_price,
+            base_unit_price: it.base_unit_price, quantity: it.quantity,
+            sale_fee: it.sale_fee, discounts: it.discounts,
+          })),
+          pagamentos: (o.payments || []).map((pp) => ({
+            id: pp.id, status: pp.status, transaction_amount: pp.transaction_amount,
+            total_paid_amount: pp.total_paid_amount, coupon_amount: pp.coupon_amount,
+            marketplace_fee: pp.marketplace_fee, shipping_cost: pp.shipping_cost,
+          })),
+        };
+        await tenta('descontos', '/orders/' + id + '/discounts');
+        const pid = ((o.payments || [])[0] || {}).id;
+        if (pid) {
+          await tenta('pagamentoV1', '/v1/payments/' + pid);
+          if (saida.pagamentoV1 && saida.pagamentoV1.fee_details) {
+            saida.resumoTaxas = saida.pagamentoV1.fee_details.map((f) => ({
+              tipo: f.type, valor: f.amount, quemPaga: f.fee_payer,
+            }));
+            const td = saida.pagamentoV1.transaction_details || {};
+            saida.resumoPagamento = {
+              total_paid_amount: td.total_paid_amount,
+              net_received_amount: td.net_received_amount,
+              coupon_amount: saida.pagamentoV1.coupon_amount,
+              transaction_amount: saida.pagamentoV1.transaction_amount,
+            };
+          }
+        }
+        return sendJSON(res, 200, saida);
+      } catch (e) { return sendJSON(res, 200, { erro: String(e.message || e), parcial: saida }); }
+    }
+
     // Diagnóstico: pedido cru do Mercado Livre, para procurar marca de publicidade
     if (p === '/api/ml/pedido') {
       const conta = u.searchParams.get('conta') || 'ml';
