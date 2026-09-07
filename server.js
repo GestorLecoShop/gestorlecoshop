@@ -233,6 +233,43 @@ async function mlApi(pathStr, conta = 'ml') {
   return json;
 }
 
+// ---- Quem bancou o cupom de cada pedido do Mercado Livre ----
+// Existem dois cupons diferentes e eles não podem receber o mesmo tratamento:
+//   • cupom do vendedor (os nossos de R$ 10) — sai do nosso bolso, é custo;
+//   • cupom do ML (campanha do marketplace) — o comprador paga menos e nós
+//     recebemos sobre o valor cheio, então não é custo nenhum.
+// A lista de pedidos só informa o valor total do cupom, sem dizer quem pagou.
+// Quem diz é /orders/{id}/discounts, no campo amounts.seller. Como essa resposta
+// nunca muda depois do pedido pago, perguntamos uma vez e guardamos em disco.
+const ML_CUPOM_FILE = path.join(DATA_DIR, 'ml-cupons.json');
+const mlCupons = readJSON(ML_CUPOM_FILE, {});
+let mlCuponsSujo = false;
+function salvarCupons() {
+  if (!mlCuponsSujo) return;
+  try { writeJSON(ML_CUPOM_FILE, mlCupons); mlCuponsSujo = false; } catch { /* disco cheio: seguimos sem cache */ }
+}
+async function mlCupomOrigem(conta, id) {
+  const chave = conta + ':' + id;
+  if (mlCupons[chave]) return mlCupons[chave];
+  try {
+    const d = await mlApi('/orders/' + id + '/discounts', conta);
+    let total = 0, vendedor = 0;
+    for (const det of (d.details || [])) {
+      // "discount" é a oferta do anúncio: já vem embutida no unit_price, descontar
+      // de novo seria contar duas vezes. Só o "coupon" entra aqui.
+      if (det.type !== 'coupon') continue;
+      for (const it of (det.items || [])) {
+        const a = it.amounts || {};
+        total += Number(a.total || 0);
+        vendedor += Number(a.seller || 0);
+      }
+    }
+    const r = { total: round2(total), vendedor: round2(vendedor) };
+    mlCupons[chave] = r; mlCuponsSujo = true;
+    return r;
+  } catch { return null; }
+}
+
 // Busca pedidos pagos no período (paginado)
 async function mlFetchOrders(sellerId, fromISO, toISO, conta = 'ml') {
   const orders = [];
@@ -1570,6 +1607,15 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
   guardarFotos(orders, thumbs);
   // frete + modalidade de envio de cada pedido, buscados em paralelo
   const envioPedido = await emLotes(orders, 8, (o) => mlEnvio(o.shipping && o.shipping.id, conta));
+  // Para cada pedido com cupom, descobrir quanto saiu do nosso bolso. Só os que
+  // têm cupom, e só os que ainda não estão no cache — normalmente sobra nada.
+  const origens = {};
+  const comCupom = orders.filter((o) => o.coupon && o.coupon.amount > 0);
+  if (comCupom.length) {
+    const achados = await emLotes(comCupom, 8, (o) => mlCupomOrigem(conta, o.id));
+    comCupom.forEach((o, i) => { if (achados[i]) origens[o.id] = achados[i]; });
+    salvarCupons();
+  }
   const out = [];
   orders.forEach((o, idx) => {
     const items = o.order_items || [];
@@ -1580,8 +1626,14 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
     // o vendedor recebe sobre o valor cheio. Conferido em dois pedidos iguais do
     // mesmo dia — com e sem cupom, o paid_amount e a sale_fee são idênticos, só o
     // total_paid_amount do comprador muda. Descontar isso comia lucro que existe.
-    const cupomMkt = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
-    const descontos = 0;
+    const cupomTotal = (o.coupon && o.coupon.amount) ? o.coupon.amount : 0;
+    const origem = origens[o.id];
+    // Se a API não respondeu, não dá para saber quem pagou. Assumimos que foi o
+    // vendedor — é o caso mais comum e erra para o lado prudente —, mas marcamos
+    // o pedido para não passar por certeza o que é palpite.
+    const cupomVend = cupomTotal ? (origem ? origem.vendedor : cupomTotal) : 0;
+    const cupomMkt = round2(cupomTotal - cupomVend);
+    const descontos = cupomVend;
     const itemsRaw = items.map((it) => ({
       titulo: (it.item && it.item.title) || '—',
       chave: chaveAnuncio(it.item),
@@ -1603,7 +1655,9 @@ async function mlListSales(fromISO, toISO, conta = 'ml') {
       itemsRaw, freteVend, freteComp, descontos, conta,
     });
     // guardado só para exibir: o comprador usou cupom, mas quem pagou foi o ML
-    if (cupomMkt) pedido.cupomMarketplace = round2(cupomMkt);
+    if (cupomMkt) pedido.cupomMarketplace = cupomMkt;
+    if (cupomVend) pedido.cupomVendedor = round2(cupomVend);
+    if (cupomTotal && !origem) pedido.cupomIndefinido = true;
     out.push(pedido);
   });
   return out;
