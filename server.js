@@ -90,6 +90,11 @@ let tokens = readJSON(TOKENS_FILE, {});          // { ml: { access_token, refres
 function normalizeCosts(c) {
   c = c || {};
   c.taxaPadrao = c.taxaPadrao != null ? c.taxaPadrao : 0.06;
+  // Alíquota por filial: quem fatura a venda é que define o imposto, não o produto.
+  // { desde: 'YYYY-MM-DD', padrao: 0.06, canais: { ldmsc: 0.04 } }
+  // Só vale das vendas de "desde" em diante — meses fechados antes disso ficam
+  // como estavam, com a alíquota do SKU ou a padrão antiga.
+  c.taxaFilial = c.taxaFilial || null;
   c.itens = c.itens || {};
   // Anuncios do marketplace apontando para um produto interno.
   // Ex.: { "MLB123456": "KIT50X" } - a venda desse anuncio usa o custo do KIT50X.
@@ -1332,7 +1337,7 @@ async function mlBuildChannel(fromISO, toISO, { withShipping = true, conta = 'ml
       const fee = (it.sale_fee || 0) * qty; // comissão por unidade * qtd
       const sku = resolverSku(chaveAnuncio(it.item)) || 'SEM_SKU';
       const nome = (it.item && it.item.title) || sku;
-      const cf = costFor(sku, o.date_created);            // custo vigente na data da venda
+      const cf = costFor(sku, o.date_created, conta);     // custo vigente na data da venda
       const custoItem = (cf.custo + cf.custoExtra) * qty;
       const impItem = receita * cf.imposto;
       fat += receita; comissao += fee; custoProdutos += custoItem; imposto += impItem;
@@ -1478,10 +1483,23 @@ async function varrerPendentes(dias = 90) {
 }
 
 // Retorna o custo vigente de um SKU na data da venda (histórico)
-function costFor(sku, dateISO) {
+// Qual alíquota vale para uma venda: a da filial que faturou, se já estiver em
+// vigência na data; senão a regra antiga (alíquota do próprio SKU, ou a padrão).
+function taxaDaVenda(conf, dataISO, canal) {
+  const padrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.06;
+  const tf = costs.taxaFilial;
+  if (tf && tf.desde && dataISO >= tf.desde) {
+    const porCanal = (tf.canais || {})[canal];
+    if (porCanal != null) return porCanal;
+    return tf.padrao != null ? tf.padrao : padrao;
+  }
+  return (conf && conf.imposto != null) ? conf.imposto : padrao;
+}
+
+function costFor(sku, dateISO, canal) {
   const conf = costs.itens[sku] || {};
-  const taxa = conf.imposto != null ? conf.imposto : (costs.taxaPadrao != null ? costs.taxaPadrao : 0.06);
   const d = (dateISO || todayISO()).slice(0, 10);
+  const taxa = taxaDaVenda(conf, d, canal);
   let best = null;
   for (const e of (conf.custos || [])) {
     if (e.desde <= d && (!e.ate || e.ate >= d)) { if (!best || e.desde > best.desde) best = e; }
@@ -1520,7 +1538,7 @@ function buildOrder({ id, data, dataAprov, status, envio, pack, itemsRaw, freteV
     const tp = it.unit * it.qtd;
     const share = tp / totalProduto;
     const fVend = freteVend * share, desc = descontos * share, fComp = freteComp * share;
-    const cf = costFor(it.sku, data);                     // custo vigente na data da venda (histórico)
+    const cf = costFor(it.sku, data, conta);              // custo e imposto vigentes na data da venda
     const taxa = cf.imposto;
     const imposto = tp * taxa;
     const custo = cf.custo * it.qtd;
@@ -1881,6 +1899,16 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       let mudou = false;
       if (b && b.taxaPadrao != null) { costs.taxaPadrao = b.taxaPadrao; mudou = true; }
+      // Alíquota por filial. Mandar taxaFilial: null desliga a regra e devolve
+      // o cálculo para a alíquota do SKU / padrão.
+      if (b && b.taxaFilial !== undefined) {
+        costs.taxaFilial = b.taxaFilial ? {
+          desde: String(b.taxaFilial.desde || '').slice(0, 10),
+          padrao: b.taxaFilial.padrao != null ? Number(b.taxaFilial.padrao) : null,
+          canais: b.taxaFilial.canais || {},
+        } : null;
+        mudou = true;
+      }
       // Tira a alíquota individual dos produtos e devolve todo mundo ao padrão
       if (b && b.limparImpostoPorSku) {
         for (const sku of Object.keys(costs.itens || {})) delete costs.itens[sku].imposto;
