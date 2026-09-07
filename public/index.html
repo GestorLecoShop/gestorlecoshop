@@ -724,8 +724,8 @@ function renderSales(demo,error){
         <div class="brk">
           <div class="r"><span class="lbl2">Total do Pedido</span><b class="pos">+ ${BRL(r.totalProduto)}</b></div>
           <div class="r"><span class="lbl2">Frete (pago pelo vendedor)</span><b class="neg">– ${BRL(r.freteVend)}</b></div>
-          ${r.descontos?`<div class="r"><span class="lbl2">Cupom / Desconto (pago pelo vendedor)</span><b class="neg">– ${BRL(r.descontos)}</b></div>`:''}
-          ${o.cupomMarketplace?`<div class="r"><span class="lbl2">Cupom do marketplace (o comprador pagou ${BRL(r.totalProduto-o.cupomMarketplace)})</span><b class="muted">bancado pelo ${o.marketplace}</b></div>`:''}
+          ${r.descontos?`<div class="r"><span class="lbl2">Cupom / Desconto (bancado por nós)${o.cupomIndefinido?' <b class="muted" title="A API não informou quem bancou este cupom; contamos como nosso, que é o caso mais comum.">· origem não confirmada</b>':''}</span><b class="neg">– ${BRL(r.descontos)}</b></div>`:''}
+          ${o.cupomMarketplace?`<div class="r"><span class="lbl2">Cupom do marketplace (o comprador pagou ${BRL(r.totalProduto-o.cupomMarketplace-(o.cupomVendedor||0))})</span><b class="muted">bancado pelo ${o.marketplace} · não é custo</b></div>`:''}
           ${r.freteComp?`<div class="r"><span class="lbl2">Frete (pago pelo comprador)</span><b class="muted">repassado</b></div>`:''}
           <div class="r"><span class="lbl2">Comissão</span><b class="neg">– ${BRL(r.comissao)}</b></div>
           <div class="r tot"><span>Líquido do Marketplace</span><b>${BRL(r.liquido)}</b></div>
