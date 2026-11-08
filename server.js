@@ -95,6 +95,10 @@ function normalizeCosts(c) {
   // Só vale das vendas de "desde" em diante — meses fechados antes disso ficam
   // como estavam, com a alíquota do SKU ou a padrão antiga.
   c.taxaFilial = c.taxaFilial || null;
+  // Regras anteriores (cada uma vale de "desde" até a próxima começar). Ao salvar
+  // uma regra com data mais nova, a vigente vem para cá em vez de ser apagada —
+  // assim mudar a alíquota em novembro não reescreve julho a outubro.
+  c.taxaFilialHist = Array.isArray(c.taxaFilialHist) ? c.taxaFilialHist : [];
   c.itens = c.itens || {};
   // Anuncios do marketplace apontando para um produto interno.
   // Ex.: { "MLB123456": "KIT50X" } - a venda desse anuncio usa o custo do KIT50X.
@@ -1487,8 +1491,12 @@ async function varrerPendentes(dias = 90) {
 // vigência na data; senão a regra antiga (alíquota do próprio SKU, ou a padrão).
 function taxaDaVenda(conf, dataISO, canal) {
   const padrao = costs.taxaPadrao != null ? costs.taxaPadrao : 0.06;
-  const tf = costs.taxaFilial;
-  if (tf && tf.desde && dataISO >= tf.desde) {
+  // Regra mais recente cujo "desde" já chegou na data da venda
+  let tf = null;
+  for (const r of [...(costs.taxaFilialHist || []), costs.taxaFilial]) {
+    if (r && r.desde && dataISO >= r.desde && (!tf || r.desde > tf.desde)) tf = r;
+  }
+  if (tf) {
     const porCanal = (tf.canais || {})[canal];
     if (porCanal != null) return porCanal;
     return tf.padrao != null ? tf.padrao : padrao;
@@ -1902,11 +1910,22 @@ const server = http.createServer(async (req, res) => {
       // Alíquota por filial. Mandar taxaFilial: null desliga a regra e devolve
       // o cálculo para a alíquota do SKU / padrão.
       if (b && b.taxaFilial !== undefined) {
-        costs.taxaFilial = b.taxaFilial ? {
+        const nova = b.taxaFilial ? {
           desde: String(b.taxaFilial.desde || '').slice(0, 10),
           padrao: b.taxaFilial.padrao != null ? Number(b.taxaFilial.padrao) : null,
           canais: b.taxaFilial.canais || {},
         } : null;
+        if (!nova) {
+          costs.taxaFilial = null; costs.taxaFilialHist = [];          // desliga tudo
+        } else {
+          const atual = costs.taxaFilial;
+          // regra nova começa depois da vigente: a vigente vira histórico
+          if (atual && atual.desde && nova.desde > atual.desde) costs.taxaFilialHist.push(atual);
+          // descarta regras antigas que começariam na mesma data ou depois da nova
+          costs.taxaFilialHist = costs.taxaFilialHist.filter((r) => r && r.desde && r.desde < nova.desde)
+            .sort((a, z) => (a.desde < z.desde ? -1 : 1));
+          costs.taxaFilial = nova;
+        }
         mudou = true;
       }
       // Tira a alíquota individual dos produtos e devolve todo mundo ao padrão
