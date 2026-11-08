@@ -1235,6 +1235,11 @@ async function carregarImposto(){
     $('cfgFilialInfo').textContent=(tf&&tf.desde)
       ? ('Em vigor desde '+tf.desde.split('-').reverse().join('/')+': Matriz '+pc(tf.padrao||0)+'% e Filial 04 '+pc((tf.canais||{}).ldmsc||0)+'%. Nessas vendas a alíquota por SKU não é usada.')
       : 'Desligada — vale a alíquota própria do SKU, ou o padrão acima.';
+    const hist=(c.taxaFilialHist||[]).slice().sort((a,z)=>a.desde<z.desde?-1:1);
+    if(tf&&tf.desde&&hist.length){
+      const fim=i=>{const d=new Date((i+1<hist.length?hist[i+1].desde:tf.desde)+'T12:00:00');d.setDate(d.getDate()-1);return d.toISOString().slice(0,10).split('-').reverse().join('/');};
+      $('cfgFilialInfo').textContent+=' Antes: '+hist.map((r,i)=>r.desde.split('-').reverse().join('/')+' a '+fim(i)+' — Matriz '+pc(r.padrao||0)+'%, Filial 04 '+pc((r.canais||{}).ldmsc||0)+'%').join('; ')+'.';
+    }
   }catch(e){}
 }
 async function salvarTaxaFilial(){
